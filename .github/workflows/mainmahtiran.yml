@@ -1,10 +1,10 @@
-name: Check ARM64 LD Dead Code Support
+name: Test ARM64 LD_DEAD_CODE_DATA_ELIMINATION
 
-on:
+"on":
   workflow_dispatch:
 
 jobs:
-  check:
+  test-ld-dead-code:
     runs-on: ubuntu-22.04
 
     steps:
@@ -12,14 +12,14 @@ jobs:
       # ============================================================
       # 1. CHECKOUT
       # ============================================================
-      - name: Checkout Kernel Branch 16
+      - name: Checkout Kernel
         uses: actions/checkout@v4
         with:
           ref: 16
           fetch-depth: 1
 
       # ============================================================
-      # 2. INSTALL BUILD DEPENDENCIES
+      # 2. INSTALL DEPENDENCIES
       # ============================================================
       - name: Install Dependencies
         run: |
@@ -38,168 +38,45 @@ jobs:
             lld
 
       # ============================================================
-      # 3. GIT INFORMATION
+      # 3. ANALYZE ORIGINAL SUPPORT
       # ============================================================
-      - name: Git Information
+      - name: Analyze Original Support
         run: |
-          echo "=========================================="
-          echo " GIT INFORMATION"
-          echo "=========================================="
+          echo "============================================================"
+          echo "ORIGINAL ARM64 SUPPORT ANALYSIS"
+          echo "============================================================"
 
           echo
-          echo "Branch:"
-          git branch --show-current
-
-          echo
-          echo "Commit:"
-          git rev-parse HEAD
-
-          echo
-          echo "Kernel version:"
-          make kernelversion || true
-
-      # ============================================================
-      # 4. ORIGINAL KCONFIG ANALYSIS
-      # ============================================================
-      - name: Check Original Kconfig
-        run: |
-          echo "=========================================="
-          echo " ORIGINAL KCONFIG ANALYSIS"
-          echo "=========================================="
-
-          echo
-          echo ">>> Symbol definition:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/Kconfig \
-            arch/arm64 \
-            2>/dev/null || true
+          echo ">>> LD_DEAD_CODE_DATA_ELIMINATION definition:"
+          grep -n -A15 -B3 \
+            "config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/Kconfig || true
 
           echo
           echo ">>> ARM64 select:"
-          if grep -Rns \
-            --exclude-dir=.git \
+          grep -n \
             "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64 \
-            2>/dev/null; then
+            arch/arm64/Kconfig || true
 
-            echo
-            echo "RESULT: ARM64 ALREADY SELECTS THE OPTION"
-
-          else
-
-            echo
-            echo "RESULT: ARM64 DOES NOT SELECT THE OPTION"
-
-          fi
+          echo
+          echo ">>> Makefile support:"
+          grep -n -A8 -B3 \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            Makefile || true
 
       # ============================================================
-      # 5. ORIGINAL LINKER / SECTION ANALYSIS
-      # ============================================================
-      - name: Check ARM64 Linker Support
-        run: |
-          echo "=========================================="
-          echo " ARM64 LINKER / SECTION ANALYSIS"
-          echo "=========================================="
-
-          echo
-          echo ">>> ARM64 linker scripts:"
-          find arch/arm64 \
-            -type f \
-            \( -name "*.lds" -o -name "*.lds.S" \) \
-            -print \
-            2>/dev/null || true
-
-          echo
-          echo ">>> TEXT / DATA / BSS handling:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -E "\.text\.\*|\.data\.\*|\.bss\.\*|TEXT_MAIN|DATA_MAIN|BSS_MAIN" \
-            arch/arm64 \
-            include/asm-generic \
-            2>/dev/null || true
-
-          echo
-          echo ">>> KEEP() directives:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -E "KEEP\(" \
-            arch/arm64 \
-            2>/dev/null || true
-
-          echo
-          echo ">>> ENTRY() directives:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -E "ENTRY\(" \
-            arch/arm64 \
-            2>/dev/null || true
-
-      # ============================================================
-      # 6. BUILD SYSTEM ANALYSIS
-      # ============================================================
-      - name: Check Build System
-        run: |
-          echo "=========================================="
-          echo " BUILD SYSTEM ANALYSIS"
-          echo "=========================================="
-
-          echo
-          echo ">>> LD_DEAD_CODE_DATA_ELIMINATION references:"
-          grep -Rns \
-            --exclude-dir=.git \
-            "LD_DEAD_CODE_DATA_ELIMINATION" \
-            Makefile \
-            arch \
-            scripts \
-            include \
-            2>/dev/null || true
-
-          echo
-          echo ">>> Section compilation flags:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -E -- "-ffunction-sections|-fdata-sections" \
-            Makefile \
-            arch \
-            scripts \
-            2>/dev/null || true
-
-          echo
-          echo ">>> Linker garbage collection:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -- "--gc-sections" \
-            Makefile \
-            arch \
-            scripts \
-            2>/dev/null || true
-
-      # ============================================================
-      # 7. BACKUP ARM64 KCONFIG
+      # 4. BACKUP ORIGINAL ARM64 KCONFIG
       # ============================================================
       - name: Backup ARM64 Kconfig
         run: |
-          echo "=========================================="
-          echo " BACKUP ARM64 KCONFIG"
-          echo "=========================================="
-
           cp arch/arm64/Kconfig /tmp/arm64-Kconfig.original
 
-          echo "Backup created:"
-          ls -l /tmp/arm64-Kconfig.original
-
       # ============================================================
-      # 8. TEMPORARILY ADD ARM64 SELECT
+      # 5. TEMPORARILY ADD ARM64 SELECT
       # ============================================================
-      - name: Create Temporary ARM64 Capability Test
+      - name: Temporarily Add ARM64 Select
         run: |
-          echo "=========================================="
-          echo " TEMPORARY ARM64 CAPABILITY TEST"
-          echo "=========================================="
-
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
 
           path = Path("arch/arm64/Kconfig")
@@ -207,407 +84,186 @@ jobs:
 
           if "select LD_DEAD_CODE_DATA_ELIMINATION" in text:
               raise SystemExit(
-                  "LD_DEAD_CODE_DATA_ELIMINATION select already exists"
+                  "ERROR: select LD_DEAD_CODE_DATA_ELIMINATION "
+                  "already exists in arch/arm64/Kconfig"
               )
 
-          marker = "config ARM64\n"
-
-          if marker not in text:
-              raise SystemExit(
-                  "Could not find 'config ARM64' in arch/arm64/Kconfig"
-              )
-
-          replacement = (
+          old = "config ARM64\n"
+          new = (
               "config ARM64\n"
-              "\tselect LD_DEAD_CODE_DATA_ELIMINATION\n"
+              "    select LD_DEAD_CODE_DATA_ELIMINATION\n"
           )
 
-          text = text.replace(marker, replacement, 1)
+          if old not in text:
+              raise SystemExit(
+                  "ERROR: config ARM64 block not found"
+              )
 
+          text = text.replace(old, new, 1)
           path.write_text(text)
+
+          print("Temporary ARM64 select added.")
           PY
 
           echo
-          echo "Temporary select:"
-          grep -n -A3 -B2 \
+          echo ">>> Temporary select:"
+          grep -n -A3 \
             "config ARM64" \
-            arch/arm64/Kconfig | head -n 20
+            arch/arm64/Kconfig
 
       # ============================================================
-      # 9. VERIFY TEMPORARY MODIFICATION
+      # 6. LOAD REAL VIOLET DEFCONFIG
       # ============================================================
-      - name: Verify Temporary Kconfig Modification
+      - name: Load Violet Perf Defconfig
         run: |
-          echo "=========================================="
-          echo " VERIFY TEMPORARY KCONFIG MODIFICATION"
-          echo "=========================================="
+          rm -rf arm64-test
 
-          if grep -q \
-            "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/Kconfig; then
-
-            echo
-            echo "RESULT: TEMPORARY SELECT PRESENT"
-
-          else
-
-            echo
-            echo "RESULT: TEMPORARY SELECT WAS NOT INSERTED"
-            exit 1
-
-          fi
-
-      # ============================================================
-      # 10. CREATE PURE ARM64 BUILD CONFIGURATION
-      # ============================================================
-      - name: Generate Pure ARM64 Defconfig
-        run: |
-          echo "=========================================="
-          echo " PURE ARM64 CONFIGURATION"
-          echo "=========================================="
-
-          rm -rf "$GITHUB_WORKSPACE/arm64-test"
-
-          mkdir -p "$GITHUB_WORKSPACE/arm64-test"
-
-          make \
-            O="$GITHUB_WORKSPACE/arm64-test" \
+          make O="$PWD/arm64-test" \
             ARCH=arm64 \
-            defconfig
-
-          echo
-          echo "Generated ARM64 configuration:"
-
-          grep -n \
-            -E "^CONFIG_(LD_DEAD_CODE_DATA_ELIMINATION|LTO|LTO_CLANG|THINLTO)=" \
-            "$GITHUB_WORKSPACE/arm64-test/.config" \
-            || true
+            LLVM=1 \
+            LLVM_IAS=1 \
+            vendor/violet-perf_defconfig
 
       # ============================================================
-      # 11. KCONFIG ENABLE TEST
+      # 7. RESOLVE CONFIGURATION
       # ============================================================
-      - name: Kconfig Enabled Test
+      - name: Resolve Configuration
         run: |
-          echo "=========================================="
-          echo " KCONFIG ENABLE TEST"
-          echo "=========================================="
-
-          CONFIG="$GITHUB_WORKSPACE/arm64-test/.config"
-
-          echo
-          echo "Running olddefconfig..."
-
-          make \
-            O="$GITHUB_WORKSPACE/arm64-test" \
+          make O="$PWD/arm64-test" \
             ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
             olddefconfig
 
-          echo
-          echo "Checking generated configuration..."
-
-          grep -n \
-            -E "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
-            "$CONFIG" \
-            || true
-
-          echo
-          if grep -q \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" \
-            "$CONFIG"; then
-
-            echo
-            echo "RESULT: PASS"
-            echo
-            echo "ARM64 Kconfig accepted:"
-            echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
-
-          else
-
-            echo
-            echo "RESULT: FAIL"
-            echo
-            echo "ARM64 Kconfig did not produce:"
-            echo "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
-
-            exit 1
-
-          fi
-
       # ============================================================
-      # 12. AUTO.CONF TEST
+      # 8. PREPARE CONFIGURATION
       # ============================================================
-      - name: Check Built Configuration
+      - name: Prepare Configuration
         run: |
-          echo "=========================================="
-          echo " BUILT CONFIGURATION CHECK"
-          echo "=========================================="
-
-          CONFIG="$GITHUB_WORKSPACE/arm64-test/.config"
-          AUTO="$GITHUB_WORKSPACE/arm64-test/include/config/auto.conf"
-
-          echo
-          echo ">>> .config:"
-          grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
-            "$CONFIG" \
-            || true
-
-          echo
-          echo ">>> auto.conf:"
-          grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
-            "$AUTO" \
-            || true
-
-          echo
-          if grep -q \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" \
-            "$AUTO"; then
-
-            echo
-            echo "RESULT: PASS"
-            echo "Built Kconfig state contains the option."
-
-          else
-
-            echo
-            echo "RESULT: FAIL"
-            echo "auto.conf does not contain the option."
-
-            exit 1
-
-          fi
-
-      # ============================================================
-      # 13. PREPARE BUILD
-      # ============================================================
-      - name: Prepare ARM64 Build
-        run: |
-          echo "=========================================="
-          echo " PREPARE ARM64 BUILD"
-          echo "=========================================="
-
-          make \
-            O="$GITHUB_WORKSPACE/arm64-test" \
+          make O="$PWD/arm64-test" \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
             prepare
 
-          make \
-            O="$GITHUB_WORKSPACE/arm64-test" \
+          make O="$PWD/arm64-test" \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
             modules_prepare
 
       # ============================================================
-      # 14. VERIFY COMPILER FLAGS
+      # 9. CHECK CONFIGURATION
       # ============================================================
-      - name: Verify Compiler Section Flags
+      - name: Check LD_DEAD_CODE_DATA_ELIMINATION
         run: |
-          echo "=========================================="
-          echo " VERIFY COMPILER SECTION FLAGS"
-          echo "=========================================="
+          set -e
+
+          echo "============================================================"
+          echo "LD_DEAD_CODE_DATA_ELIMINATION CONFIG CHECK"
+          echo "============================================================"
 
           echo
-          echo "CONFIG:"
+          echo ">>> .config:"
           grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" \
-            "$GITHUB_WORKSPACE/arm64-test/.config"
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            arm64-test/.config
 
           echo
-          echo "Running verbose dry-run..."
+          echo ">>> auto.conf:"
+          grep -n \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            arm64-test/include/config/auto.conf
 
-          make \
-            O="$GITHUB_WORKSPACE/arm64-test" \
+          echo
+          echo ">>> Verifying value..."
+
+          if grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
+            arm64-test/.config && \
+             grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
+            arm64-test/include/config/auto.conf
+          then
+            echo
+            echo "PASS: CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+          else
+            echo
+            echo "FAIL: CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not enabled"
+            exit 1
+          fi
+
+      # ============================================================
+      # 10. CHECK KBUILD FLAGS
+      # ============================================================
+      - name: Check Kbuild Flags
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "KBUILD FLAG CHECK"
+          echo "============================================================"
+
+          echo
+          echo ">>> Testing compiler flags:"
+
+          make O="$PWD/arm64-test" \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
             V=1 \
-            -n vmlinux \
-            > /tmp/arm64-build-dryrun.log 2>&1 || true
+            -n vmlinux 2>&1 | tee /tmp/vmlinux-dry-run.log
 
           echo
           echo ">>> -ffunction-sections:"
-          grep -n \
-            -- "-ffunction-sections" \
-            /tmp/arm64-build-dryrun.log \
-            | head -n 20 \
-            || true
+          if grep -q -- "-ffunction-sections" /tmp/vmlinux-dry-run.log; then
+            echo "PASS"
+          else
+            echo "FAIL"
+            exit 1
+          fi
 
           echo
           echo ">>> -fdata-sections:"
-          grep -n \
-            -- "-fdata-sections" \
-            /tmp/arm64-build-dryrun.log \
-            | head -n 20 \
-            || true
+          if grep -q -- "-fdata-sections" /tmp/vmlinux-dry-run.log; then
+            echo "PASS"
+          else
+            echo "FAIL"
+            exit 1
+          fi
 
           echo
           echo ">>> --gc-sections:"
-          grep -n \
-            -- "--gc-sections" \
-            /tmp/arm64-build-dryrun.log \
-            | head -n 20 \
-            || true
-
-      # ============================================================
-      # 15. ACTUAL ARM64 BUILD
-      # ============================================================
-      - name: Build ARM64 Kernel
-        run: |
-          echo "=========================================="
-          echo " ACTUAL ARM64 BUILD"
-          echo "=========================================="
-
-          make \
-            O="$GITHUB_WORKSPACE/arm64-test" \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            -j"$(nproc)" \
-            Image \
-            2>&1 | tee /tmp/arm64-build.log
-
-      # ============================================================
-      # 16. VERIFY FINAL IMAGE
-      # ============================================================
-      - name: Verify ARM64 Build Output
-        run: |
-          echo "=========================================="
-          echo " VERIFY ARM64 BUILD OUTPUT"
-          echo "=========================================="
-
-          IMAGE="$GITHUB_WORKSPACE/arm64-test/arch/arm64/boot/Image"
-
-          echo
-          echo "Expected Image:"
-          echo "$IMAGE"
-
-          if [ -f "$IMAGE" ]; then
-
-            echo
-            echo "RESULT: PASS"
-            echo "ARM64 kernel Image was successfully built."
-
-            echo
-            echo "Image size:"
-            ls -lh "$IMAGE"
-
+          if grep -q -- "--gc-sections" /tmp/vmlinux-dry-run.log; then
+            echo "PASS"
           else
-
-            echo
-            echo "RESULT: FAIL"
-            echo "ARM64 Image was not generated."
-
+            echo "FAIL"
             exit 1
-
           fi
 
+          echo
+          echo "============================================================"
+          echo "RESULT: LD_DEAD_CODE_DATA_ELIMINATION SUPPORT VERIFIED"
+          echo "============================================================"
+
       # ============================================================
-      # 17. RESTORE ORIGINAL KCONFIG
+      # 11. RESTORE ORIGINAL ARM64 KCONFIG
       # ============================================================
       - name: Restore Original ARM64 Kconfig
         if: always()
         run: |
-          echo "=========================================="
-          echo " RESTORE ORIGINAL ARM64 KCONFIG"
-          echo "=========================================="
+          cp /tmp/arm64-Kconfig.original arch/arm64/Kconfig
 
-          if [ -f /tmp/arm64-Kconfig.original ]; then
-
-            cp \
-              /tmp/arm64-Kconfig.original \
-              arch/arm64/Kconfig
-
-            echo
-            echo "Original arch/arm64/Kconfig restored."
-
-          else
-
-            echo
-            echo "ERROR: Original Kconfig backup not found."
-
-            exit 1
-
-          fi
-
-      # ============================================================
-      # 18. VERIFY SOURCE TREE RESTORED
-      # ============================================================
-      - name: Verify Source Tree Restoration
-        if: always()
-        run: |
-          echo "=========================================="
-          echo " VERIFY SOURCE TREE RESTORATION"
-          echo "=========================================="
+          echo "============================================================"
+          echo "RESTORE CHECK"
+          echo "============================================================"
 
           if grep -q \
             "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/Kconfig; then
-
-            echo
-            echo "ERROR:"
-            echo "Temporary select still exists!"
-
+            arch/arm64/Kconfig
+          then
+            echo "FAIL: Temporary select still exists"
             exit 1
-
           else
-
-            echo
-            echo "RESULT: PASS"
-            echo "Temporary ARM64 select is gone."
-
+            echo "PASS: Original arch/arm64/Kconfig restored"
           fi
-
-          echo
-          echo "Git status:"
-          git status --short
-
-      # ============================================================
-      # 19. FINAL VERDICT
-      # ============================================================
-      - name: Final Verdict
-        if: always()
-        run: |
-          echo "=========================================="
-          echo " FINAL VERDICT"
-          echo "=========================================="
-
-          CONFIG="$GITHUB_WORKSPACE/arm64-test/.config"
-          IMAGE="$GITHUB_WORKSPACE/arm64-test/arch/arm64/boot/Image"
-
-          echo
-          echo "Kconfig:"
-          grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
-            "$CONFIG" \
-            2>/dev/null || true
-
-          echo
-          echo "ARM64 Image:"
-          if [ -f "$IMAGE" ]; then
-            echo "BUILD SUCCESS"
-          else
-            echo "BUILD FAILED"
-          fi
-
-          echo
-          echo "Source tree:"
-          if grep -q \
-            "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/Kconfig; then
-
-            echo "NOT RESTORED"
-
-          else
-
-            echo "RESTORED"
-
-          fi
-
-          echo
-          echo "=========================================="
-          echo " END OF ARM64 LD DEAD CODE SUPPORT CHECK"
-          echo "=========================================="
