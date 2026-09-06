@@ -1,11 +1,79 @@
-- name: Search DCE Kconfig
+name: Check LD_DEAD vv
+
+"on":
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout Kernel Branch 16
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Verify Branch
         run: |
-          echo "============================================================"
-          echo "SEARCH: LD_DEAD_CODE_DATA_ELIMINATION"
-          echo "============================================================"
+          echo "=== Git Branch ==="
+          git branch --show-current
+
+          echo "=== Git Commit ==="
+          git rev-parse HEAD
+
+      - name: Check Kconfig Definition
+        run: |
+          echo "=========================================="
+          echo " KCONFIG DEFINITION"
+          echo "=========================================="
+
+          if grep -Rns \
+            --include='Kconfig' \
+            --include='Kconfig.*' \
+            "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch kernel drivers fs mm include 2>/dev/null; then
+
+            echo
+            echo "RESULT: DEFINED IN KCONFIG"
+
+          else
+
+            echo
+            echo "RESULT: NOT DEFINED IN KCONFIG"
+
+          fi
+
+      - name: Check ARM64 References
+        run: |
+          echo "=========================================="
+          echo " ARM64 REFERENCES"
+          echo "=========================================="
 
           grep -Rns \
             "LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/arm64 \
             arch/Kconfig \
-            || true
+            2>/dev/null || true
+
+      - name: Check All Kernel References
+        run: |
+          echo "=========================================="
+          echo " ALL REFERENCES"
+          echo "=========================================="
+
+          grep -Rns \
+            "LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch kernel drivers fs mm include 2>/dev/null || true
+
+      - name: Check Defconfig
+        run: |
+          echo "=========================================="
+          echo " DEFCONFIG"
+          echo "=========================================="
+
+          grep -Rns \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64/configs \
+            2>/dev/null || true
