@@ -773,9 +773,3 @@ jobs:
             arm64-test/vmlinux
           if-no-files-found: warn
           retention-days: 7
-
-بهذا الشكل غياب DCE لن يوقف الـ Workflow، لكن إذا ظهر:
-
-CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
-
-فسيفشل الاختبار، وهذا هو السلوك الذي نريده.
