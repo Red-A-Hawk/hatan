@@ -1,0 +1,184 @@
+name: Test Stack Protector - Clang r547379 + GCC 4.9
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stack-protector-test:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. INSTALL DEPENDENCIES
+      # ============================================================
+      - name: Install Dependencies
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            wget \
+            unzip \
+            tar \
+            xz-utils
+
+      # ============================================================
+      # 2. CLONE CLANG r547379
+      # ============================================================
+      - name: Download Clang r547379
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang
+
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 3. DOWNLOAD GCC 4.9 64-BIT
+      # ============================================================
+      - name: Download GCC 4.9 64-bit
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
+
+          echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64/bin" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 4. DOWNLOAD GCC 4.9 32-BIT
+      # ============================================================
+      - name: Download GCC 4.9 32-bit
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
+
+          echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32/bin" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 5. SET TOOLCHAIN
+      # ============================================================
+      - name: Setup Toolchain
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH:$GCC64_PATH:$GCC32_PATH:$PATH"
+
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=$GCC64_PATH/aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=$GCC32_PATH/arm-linux-androideabi-" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 6. VERIFY TOOLCHAIN
+      # ============================================================
+      - name: Verify Toolchain
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "TOOLCHAIN VERSION"
+          echo "============================================================"
+
+          echo
+          echo "[Clang]"
+          clang --version
+
+          echo
+          echo "[GCC 64-bit]"
+          aarch64-linux-android-gcc --version
+
+          echo
+          echo "[GCC 32-bit]"
+          arm-linux-androideabi-gcc --version
+
+          echo
+          echo "[Paths]"
+          which clang
+          which aarch64-linux-android-gcc
+          which arm-linux-androideabi-gcc
+
+      # ============================================================
+      # 7. CREATE TEST SOURCE
+      # ============================================================
+      - name: Create Test Source
+        run: |
+          set -e
+
+          cat > /tmp/test.c <<'EOF'
+          int test(int x)
+          {
+              char buf[16];
+              buf[0] = x;
+              return buf[0];
+          }
+          EOF
+
+      # ============================================================
+      # 8. TEST CLANG + GCC TOOLCHAIN
+      # ============================================================
+      - name: Test Stack Protector Strong
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "TEST -fstack-protector-strong"
+          echo "============================================================"
+
+          echo
+          echo "Clang:"
+          clang --version
+
+          echo
+          echo "GCC Toolchain:"
+          aarch64-linux-android-gcc --version
+
+          echo
+          echo "Running:"
+
+          set -x
+
+          clang \
+            -target aarch64-linux-android \
+            --gcc-toolchain="$GCC64_PATH/.." \
+            -fstack-protector-strong \
+            -c /tmp/test.c \
+            -o /tmp/test.o
+
+          set +x
+
+          echo
+          echo "[OK] -fstack-protector-strong accepted by Clang r547379"
+
+      # ============================================================
+      # 9. VERIFY OBJECT
+      # ============================================================
+      - name: Verify Result
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "VERIFY OBJECT"
+          echo "============================================================"
+
+          file /tmp/test.o
+          ls -lh /tmp/test.o
+
+          echo
+          echo "============================================================"
+          echo "RESULT"
+          echo "============================================================"
+          echo "[OK] Clang r547379 accepts -fstack-protector-strong"
+          echo "[OK] GCC 4.9 toolchain is available"
