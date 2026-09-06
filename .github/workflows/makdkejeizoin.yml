@@ -151,6 +151,9 @@ jobs:
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             vendor/violet-perf_defconfig
 
+          scripts/config --file arm64-test/.config \
+            --enable LD_DEAD_CODE_DATA_ELIMINATION
+
       # ============================================================
       # 8. VERIFY REQUIRED CONFIGURATION - DCE ON
       # ============================================================
