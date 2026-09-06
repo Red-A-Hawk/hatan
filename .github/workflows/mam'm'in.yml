@@ -1,6 +1,6 @@
-name: "Build Real Clang PGO PROCS V1.5 (finale)"
+name: Build Real Clang PGO PROCS V1.66 (finale)
 
-"on": 
+"on":
   workflow_dispatch:
 
 jobs:
