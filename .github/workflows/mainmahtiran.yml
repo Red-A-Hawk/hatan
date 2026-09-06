@@ -23,6 +23,8 @@ jobs:
       # ============================================================
       - name: Install Dependencies
         run: |
+          set -e
+
           sudo apt-get update
 
           sudo apt-get install -y \
@@ -48,18 +50,21 @@ jobs:
 
           echo
           echo ">>> LD_DEAD_CODE_DATA_ELIMINATION definition:"
+
           grep -n -A15 -B3 \
             "config LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/Kconfig || true
 
           echo
-          echo ">>> ARM64 select:"
+          echo ">>> Existing ARM64 select:"
+
           grep -n \
             "select LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/arm64/Kconfig || true
 
           echo
           echo ">>> Makefile support:"
+
           grep -n -A8 -B3 \
             "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
             Makefile || true
@@ -69,13 +74,19 @@ jobs:
       # ============================================================
       - name: Backup ARM64 Kconfig
         run: |
-          cp arch/arm64/Kconfig /tmp/arm64-Kconfig.original
+          set -e
+
+          cp \
+            arch/arm64/Kconfig \
+            /tmp/arm64-Kconfig.original
 
       # ============================================================
       # 5. TEMPORARILY ADD ARM64 SELECT
       # ============================================================
       - name: Temporarily Add ARM64 Select
         run: |
+          set -e
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -89,6 +100,7 @@ jobs:
               )
 
           old = "config ARM64\n"
+
           new = (
               "config ARM64\n"
               "    select LD_DEAD_CODE_DATA_ELIMINATION\n"
@@ -100,6 +112,7 @@ jobs:
               )
 
           text = text.replace(old, new, 1)
+
           path.write_text(text)
 
           print("Temporary ARM64 select added.")
@@ -107,15 +120,18 @@ jobs:
 
           echo
           echo ">>> Temporary select:"
+
           grep -n -A3 \
             "config ARM64" \
             arch/arm64/Kconfig
 
       # ============================================================
-      # 6. LOAD REAL VIOLET DEFCONFIG
+      # 6. LOAD REAL VIOLET PERF DEFCONFIG
       # ============================================================
       - name: Load Violet Perf Defconfig
         run: |
+          set -e
+
           rm -rf arm64-test
 
           make O="$PWD/arm64-test" \
@@ -125,10 +141,63 @@ jobs:
             vendor/violet-perf_defconfig
 
       # ============================================================
-      # 7. RESOLVE CONFIGURATION
+      # 7. DISABLE CC_STACKPROTECTOR_STRONG
+      #
+      # This is the workaround taken from the known working
+      # PGO workflow.
+      #
+      # It prevents prepare-compiler-check from hard-failing on:
+      #
+      # Cannot use CONFIG_CC_STACKPROTECTOR_STRONG:
+      # -fstack-protector-strong not supported by compiler
+      # ============================================================
+      - name: Disable CC_STACKPROTECTOR_STRONG Workaround
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "DISABLE CC_STACKPROTECTOR_STRONG / REGULAR"
+          echo "============================================================"
+
+          echo
+          echo ">>> Before:"
+
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            arm64-test/.config \
+            || echo "(no CC_STACKPROTECTOR lines present)"
+
+          sed -i \
+            -e '/CONFIG_CC_STACKPROTECTOR_REGULAR/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_STRONG/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_AUTO/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_NONE/d' \
+            arm64-test/.config
+
+          {
+            echo "# CONFIG_CC_STACKPROTECTOR_REGULAR is not set"
+            echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set"
+            echo "# CONFIG_CC_STACKPROTECTOR_AUTO is not set"
+            echo "CONFIG_CC_STACKPROTECTOR_NONE=y"
+          } >> arm64-test/.config
+
+          echo
+          echo ">>> After:"
+
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            arm64-test/.config
+
+          echo
+          echo "[OK] Stack protector workaround applied"
+
+      # ============================================================
+      # 8. RESOLVE CONFIGURATION
       # ============================================================
       - name: Resolve Configuration
         run: |
+          set -e
+
           make O="$PWD/arm64-test" \
             ARCH=arm64 \
             LLVM=1 \
@@ -136,10 +205,73 @@ jobs:
             olddefconfig
 
       # ============================================================
-      # 8. PREPARE CONFIGURATION
+      # 9. CHECK CONFIGURATION AFTER OLDDEFCONFIG
+      # ============================================================
+      - name: Check Configuration
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "CONFIGURATION CHECK"
+          echo "============================================================"
+
+          echo
+          echo ">>> LD_DEAD_CODE_DATA_ELIMINATION:"
+
+          grep -n \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            arm64-test/.config
+
+          echo
+          echo ">>> Stack protector:"
+
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            arm64-test/.config
+
+          echo
+          echo ">>> Verify LD_DEAD_CODE_DATA_ELIMINATION=y"
+
+          if grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
+            arm64-test/.config
+          then
+            echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+          else
+            echo "[FAIL] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not enabled"
+            exit 1
+          fi
+
+          echo
+          echo ">>> Verify stack protector workaround"
+
+          if grep -q \
+            "^CONFIG_CC_STACKPROTECTOR_NONE=y$" \
+            arm64-test/.config &&
+             ! grep -q \
+            "^CONFIG_CC_STACKPROTECTOR_STRONG=y$" \
+            arm64-test/.config &&
+             ! grep -q \
+            "^CONFIG_CC_STACKPROTECTOR_REGULAR=y$" \
+            arm64-test/.config
+          then
+            echo "[OK] Stack protector workaround active"
+          else
+            echo "[FAIL] Stack protector workaround was not preserved"
+            exit 1
+          fi
+
+      # ============================================================
+      # 10. PREPARE CONFIGURATION
       # ============================================================
       - name: Prepare Configuration
         run: |
+          set -e
+
+          echo "============================================================"
+          echo "PREPARE KERNEL CONFIGURATION"
+          echo "============================================================"
+
           make O="$PWD/arm64-test" \
             ARCH=arm64 \
             LLVM=1 \
@@ -153,48 +285,51 @@ jobs:
             modules_prepare
 
       # ============================================================
-      # 9. CHECK CONFIGURATION
+      # 11. CHECK GENERATED AUTO.CONF
       # ============================================================
-      - name: Check LD_DEAD_CODE_DATA_ELIMINATION
+      - name: Check Generated auto.conf
         run: |
           set -e
 
           echo "============================================================"
-          echo "LD_DEAD_CODE_DATA_ELIMINATION CONFIG CHECK"
+          echo "GENERATED CONFIGURATION CHECK"
           echo "============================================================"
 
-          echo
-          echo ">>> .config:"
-          grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
-            arm64-test/.config
+          if [ ! -f \
+            arm64-test/include/config/auto.conf
+          ]; then
+
+            echo "[FAIL] include/config/auto.conf was not generated"
+            exit 1
+
+          fi
 
           echo
           echo ">>> auto.conf:"
+
           grep -n \
             "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
             arm64-test/include/config/auto.conf
 
           echo
-          echo ">>> Verifying value..."
+          echo ">>> Verify:"
 
           if grep -q \
             "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
-            arm64-test/.config && \
-             grep -q \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
             arm64-test/include/config/auto.conf
           then
-            echo
-            echo "PASS: CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+
+            echo "[OK] auto.conf contains CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+
           else
-            echo
-            echo "FAIL: CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not enabled"
+
+            echo "[FAIL] auto.conf does not contain the option"
             exit 1
+
           fi
 
       # ============================================================
-      # 10. CHECK KBUILD FLAGS
+      # 12. CHECK KBUILD FLAGS
       # ============================================================
       - name: Check Kbuild Flags
         run: |
@@ -204,55 +339,70 @@ jobs:
           echo "KBUILD FLAG CHECK"
           echo "============================================================"
 
-          echo
-          echo ">>> Testing compiler flags:"
-
           make O="$PWD/arm64-test" \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
             V=1 \
-            -n vmlinux 2>&1 | tee /tmp/vmlinux-dry-run.log
+            -n vmlinux \
+            2>&1 \
+            | tee /tmp/vmlinux-dry-run.log
 
           echo
           echo ">>> -ffunction-sections:"
-          if grep -q -- "-ffunction-sections" /tmp/vmlinux-dry-run.log; then
-            echo "PASS"
+
+          if grep -q \
+            -- "-ffunction-sections" \
+            /tmp/vmlinux-dry-run.log
+          then
+            echo "[OK] -ffunction-sections found"
           else
-            echo "FAIL"
+            echo "[FAIL] -ffunction-sections not found"
             exit 1
           fi
 
           echo
           echo ">>> -fdata-sections:"
-          if grep -q -- "-fdata-sections" /tmp/vmlinux-dry-run.log; then
-            echo "PASS"
+
+          if grep -q \
+            -- "-fdata-sections" \
+            /tmp/vmlinux-dry-run.log
+          then
+            echo "[OK] -fdata-sections found"
           else
-            echo "FAIL"
+            echo "[FAIL] -fdata-sections not found"
             exit 1
           fi
 
           echo
           echo ">>> --gc-sections:"
-          if grep -q -- "--gc-sections" /tmp/vmlinux-dry-run.log; then
-            echo "PASS"
+
+          if grep -q \
+            -- "--gc-sections" \
+            /tmp/vmlinux-dry-run.log
+          then
+            echo "[OK] --gc-sections found"
           else
-            echo "FAIL"
+            echo "[FAIL] --gc-sections not found"
             exit 1
           fi
 
           echo
           echo "============================================================"
-          echo "RESULT: LD_DEAD_CODE_DATA_ELIMINATION SUPPORT VERIFIED"
+          echo "LD_DEAD_CODE_DATA_ELIMINATION TEST: PASS"
           echo "============================================================"
 
       # ============================================================
-      # 11. RESTORE ORIGINAL ARM64 KCONFIG
+      # 13. RESTORE ORIGINAL ARM64 KCONFIG
       # ============================================================
       - name: Restore Original ARM64 Kconfig
         if: always()
         run: |
-          cp /tmp/arm64-Kconfig.original arch/arm64/Kconfig
+          set -e
+
+          cp \
+            /tmp/arm64-Kconfig.original \
+            arch/arm64/Kconfig
 
           echo "============================================================"
           echo "RESTORE CHECK"
@@ -262,8 +412,12 @@ jobs:
             "select LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/arm64/Kconfig
           then
-            echo "FAIL: Temporary select still exists"
+
+            echo "[FAIL] Temporary select still exists"
             exit 1
+
           else
-            echo "PASS: Original arch/arm64/Kconfig restored"
+
+            echo "[OK] Original arch/arm64/Kconfig restored"
+
           fi
