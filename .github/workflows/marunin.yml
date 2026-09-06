@@ -1,0 +1,311 @@
+name: Runner Hardware Diagnostic
+
+on:
+workflow_dispatch:
+
+jobs:
+diagnose:
+runs-on: ubuntu-22.04
+
+steps:
+
+# ============================================================
+# 1. SYSTEM INFORMATION
+# ============================================================
+- name: System Information
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "SYSTEM INFORMATION"
+    echo "============================================================"
+
+    echo
+    echo "OS:"
+    cat /etc/os-release
+
+    echo
+    echo "Kernel:"
+    uname -a
+
+    echo
+    echo "Architecture:"
+    uname -m
+
+    echo
+    echo "Hostname:"
+    hostname
+
+# ============================================================
+# 2. CPU INFORMATION
+# ============================================================
+- name: CPU Information
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "CPU INFORMATION"
+    echo "============================================================"
+
+    echo
+    echo "CPU model:"
+    lscpu | grep -E \
+      "Model name|Architecture|CPUs|Thread|Core|Socket|MHz|Vendor ID"
+
+    echo
+    echo "Online CPUs:"
+    nproc
+
+    echo
+    echo "CPU details:"
+    lscpu
+
+# ============================================================
+# 3. RAM INFORMATION
+# ============================================================
+- name: RAM Information
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "RAM INFORMATION"
+    echo "============================================================"
+
+    echo
+    echo "free -h:"
+    free -h
+
+    echo
+    echo "Detailed memory:"
+    cat /proc/meminfo
+
+# ============================================================
+# 4. SWAP INFORMATION
+# ============================================================
+- name: Swap Information
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "SWAP INFORMATION"
+    echo "============================================================"
+
+    echo
+    echo "free -h:"
+    free -h
+
+    echo
+    echo "Active swap:"
+    swapon --show || true
+
+    echo
+    echo "Swap summary:"
+    cat /proc/swaps
+
+# ============================================================
+# 5. DISK INFORMATION
+# ============================================================
+- name: Disk Information
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "DISK INFORMATION"
+    echo "============================================================"
+
+    echo
+    echo "Filesystem:"
+    df -hT
+
+    echo
+    echo "Workspace:"
+    df -hT "$GITHUB_WORKSPACE"
+
+    echo
+    echo "Workspace size:"
+    du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
+
+    echo
+    echo "/tmp:"
+    df -hT /tmp
+
+    echo
+    echo "Block devices:"
+    lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+
+# ============================================================
+# 6. CPU LOAD
+# ============================================================
+- name: CPU Load
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "CPU LOAD"
+    echo "============================================================"
+
+    echo
+    echo "Uptime:"
+    uptime
+
+    echo
+    echo "Load average:"
+    cat /proc/loadavg
+
+# ============================================================
+# 7. MEMORY PRESSURE
+# ============================================================
+- name: Memory Pressure
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "MEMORY PRESSURE"
+    echo "============================================================"
+
+    echo
+    echo "PSI memory:"
+    cat /proc/pressure/memory || true
+
+    echo
+    echo "PSI CPU:"
+    cat /proc/pressure/cpu || true
+
+    echo
+    echo "PSI IO:"
+    cat /proc/pressure/io || true
+
+# ============================================================
+# 8. TOOLCHAIN AVAILABLE ON RUNNER
+# ============================================================
+- name: Existing Toolchains
+  run: |
+    set +e
+
+    echo "============================================================"
+    echo "EXISTING TOOLCHAINS"
+    echo "============================================================"
+
+    echo
+    echo "Clang:"
+    command -v clang
+    clang --version
+
+    echo
+    echo "GCC:"
+    command -v gcc
+    gcc --version
+
+    echo
+    echo "LLD:"
+    command -v ld.lld
+    ld.lld --version
+
+    echo
+    echo "LLVM:"
+    command -v llvm-ar
+    llvm-ar --version | head -n 1
+
+    echo
+    echo "AArch64 GCC:"
+    command -v aarch64-linux-gnu-gcc
+    aarch64-linux-gnu-gcc --version | head -n 1
+
+# ============================================================
+# 9. ENVIRONMENT
+# ============================================================
+- name: Runner Environment
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "RUNNER ENVIRONMENT"
+    echo "============================================================"
+
+    echo
+    echo "GitHub runner:"
+    echo "${RUNNER_NAME:-unknown}"
+
+    echo
+    echo "Runner OS:"
+    echo "${RUNNER_OS:-unknown}"
+
+    echo
+    echo "Runner architecture:"
+    echo "${RUNNER_ARCH:-unknown}"
+
+    echo
+    echo "Workspace:"
+    echo "$GITHUB_WORKSPACE"
+
+    echo
+    echo "HOME:"
+    echo "$HOME"
+
+    echo
+    echo "TMPDIR:"
+    echo "${TMPDIR:-/tmp}"
+
+# ============================================================
+# 10. IMPORTANT LIMITS
+# ============================================================
+- name: Important Limits
+  run: |
+    set -e
+
+    echo "============================================================"
+    echo "PROCESS / SYSTEM LIMITS"
+    echo "============================================================"
+
+    echo
+    echo "ulimit:"
+    ulimit -a
+
+    echo
+    echo "Max user processes:"
+    ulimit -u
+
+    echo
+    echo "Open files:"
+    ulimit -n
+
+# ============================================================
+# 11. FINAL SUMMARY
+# ============================================================
+- name: Final Summary
+  run: |
+    set -e
+
+    echo
+    echo "============================================================"
+    echo "FINAL RUNNER SUMMARY"
+    echo "============================================================"
+
+    echo
+    echo "CPU:"
+    echo "$(nproc) logical CPUs"
+
+    echo
+    echo "RAM:"
+    free -h | grep Mem:
+
+    echo
+    echo "Swap:"
+    free -h | grep Swap:
+
+    echo
+    echo "Disk:"
+    df -h "$GITHUB_WORKSPACE" | tail -n 1
+
+    echo
+    echo "Architecture:"
+    uname -m
+
+    echo
+    echo "Kernel:"
+    uname -r
+
+    echo
+    echo "============================================================"
+    echo "DIAGNOSTIC COMPLETE"
+    echo "============================================================"
