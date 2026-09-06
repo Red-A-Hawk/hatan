@@ -1,4 +1,4 @@
-name: Check LD_DEAD_CODE_DATA_ELIMINATION
+name: Check Dead Code Data Elimination
 
 on:
   workflow_dispatch:
@@ -8,7 +8,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
       - name: Checkout Kernel Branch 16
         uses: actions/checkout@v4
         with:
@@ -17,46 +16,111 @@ jobs:
 
       - name: Verify Branch
         run: |
-          echo "=== Git Branch ==="
+          echo "=========================================="
+          echo " GIT INFORMATION"
+          echo "=========================================="
+          echo "Branch:"
           git branch --show-current
-          echo "=== Git Commit ==="
+          echo
+          echo "Commit:"
           git rev-parse HEAD
+          echo
 
-      - name: Check Kconfig Definition
+      - name: Check LD Dead Code Data Elimination
         run: |
           echo "=========================================="
-          echo " KCONFIG DEFINITION"
+          echo " LD_DEAD_CODE_DATA_ELIMINATION ANALYSIS"
+          echo "=========================================="
+          echo
+
+          echo ">>> Searching ARM64 + Kconfig + Makefile + Scripts..."
+          echo
+
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "LD_DEAD_CODE_DATA_ELIMINATION|--gc-sections|-ffunction-sections|-fdata-sections" \
+            arch/arm64 \
+            arch/Kconfig \
+            Makefile \
+            scripts \
+            2>/dev/null || true
+
+          echo
+          echo "=========================================="
+          echo " ARM64 SELECT CHECK"
           echo "=========================================="
 
           if grep -Rns \
-            --include='Kconfig' \
-            --include='Kconfig.*' \
-            "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch kernel drivers fs mm include 2>/dev/null; then
+            --exclude-dir=.git \
+            "select LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64 \
+            2>/dev/null; then
 
             echo
-            echo "RESULT: DEFINED IN KCONFIG"
+            echo "RESULT: ARM64 SELECTS LD_DEAD_CODE_DATA_ELIMINATION"
           else
+
             echo
-            echo "RESULT: NOT DEFINED IN KCONFIG"
+            echo "RESULT: ARM64 DOES NOT SELECT LD_DEAD_CODE_DATA_ELIMINATION"
           fi
 
-      - name: Check All Kernel References
-        run: |
+          echo
           echo "=========================================="
-          echo " ALL REFERENCES"
+          echo " KCONFIG DEFINITION CHECK"
           echo "=========================================="
 
+          if grep -Rns \
+            --exclude-dir=.git \
+            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/Kconfig \
+            arch/arm64 \
+            2>/dev/null; then
+
+            echo
+            echo "RESULT: KCONFIG OPTION EXISTS"
+          else
+
+            echo
+            echo "RESULT: KCONFIG OPTION NOT FOUND"
+          fi
+
+          echo
+          echo "=========================================="
+          echo " FINAL SUMMARY"
+          echo "=========================================="
+
+          echo "Source option:"
           grep -Rns \
-            "LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch kernel drivers fs mm include 2>/dev/null || true
+            --exclude-dir=.git \
+            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/Kconfig \
+            arch/arm64 \
+            2>/dev/null || echo "NOT FOUND"
 
-      - name: Check Defconfig
-        run: |
-          echo "=========================================="
-          echo " DEFCONFIG"
-          echo "=========================================="
-
+          echo
+          echo "ARM64 select:"
           grep -Rns \
-            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/configs 2>/dev/null || true
+            --exclude-dir=.git \
+            "select LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64 \
+            2>/dev/null || echo "NOT FOUND"
+
+          echo
+          echo "Linker GC:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -- "--gc-sections" \
+            arch/arm64 \
+            Makefile \
+            scripts \
+            2>/dev/null || echo "NOT FOUND"
+
+          echo
+          echo "Function sections:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E -- "-ffunction-sections|-fdata-sections" \
+            arch/arm64 \
+            Makefile \
+            scripts \
+            2>/dev/null || echo "NOT FOUND"
