@@ -1,9 +1,7 @@
-- name: Check DCE Kconfig References zz
+- name: Search DCE Kconfig
         run: |
-          set -e
-
           echo "============================================================"
-          echo "DCE KCONFIG REFERENCES"
+          echo "SEARCH: LD_DEAD_CODE_DATA_ELIMINATION"
           echo "============================================================"
 
           grep -Rns \
