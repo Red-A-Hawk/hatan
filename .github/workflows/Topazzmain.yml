@@ -1,6 +1,6 @@
 name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
 
-on:
+"on":
   workflow_dispatch:
 
 jobs:
