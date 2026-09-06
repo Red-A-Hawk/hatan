@@ -771,5 +771,3 @@ jobs:
             arm64-test/vmlinux
           if-no-files-found: warn
           retention-days: 7
-
-التغيير الوحيد: حذف خطوة "Run Olddefconfig" بالكامل وإعادة ترقيم الخطوات بعدها فقط.
