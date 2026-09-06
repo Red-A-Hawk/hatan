@@ -1,12 +1,14 @@
-name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
+name: Test ARM64 Full LTO + DCE + Polly + MLGO r547379
 
 "on":
-   workflow_dispatch:
- jobs:
+  workflow_dispatch:
+
+jobs:
   test-lto-polly-dce-mlgo:
     runs-on: ubuntu-22.04
 
     steps:
+
   # ============================================================
   # 1. CHECKOUT
   # ============================================================
@@ -296,14 +298,10 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
       if grep -q \
           "^CONFIG_CC_STACKPROTECTOR_STRONG=y$" \
           arm64-test/.config; then
-
         echo "[OK] CONFIG_CC_STACKPROTECTOR_STRONG=y"
-
       else
-
         echo "[FAIL] CONFIG_CC_STACKPROTECTOR_STRONG is not enabled"
         exit 1
-
       fi
 
       echo
@@ -331,10 +329,8 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
         echo "[OK] Full LTO configuration confirmed"
 
       else
-
         echo "[FAIL] Full LTO configuration is incorrect"
         exit 1
-
       fi
 
       echo
@@ -345,14 +341,10 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
       if grep -q \
           "^CONFIG_POLLY_CLANG=y$" \
           arm64-test/.config; then
-
         echo "[OK] CONFIG_POLLY_CLANG=y"
-
       else
-
         echo "[FAIL] CONFIG_POLLY_CLANG is not enabled"
         exit 1
-
       fi
 
       echo
@@ -363,14 +355,10 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
       if grep -q \
           "^CONFIG_MLGO_CLANG=y$" \
           arm64-test/.config; then
-
         echo "[OK] CONFIG_MLGO_CLANG=y"
-
       else
-
         echo "[FAIL] CONFIG_MLGO_CLANG is not enabled"
         exit 1
-
       fi
 
       echo
@@ -381,14 +369,10 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
       if grep -q \
           "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
           arm64-test/.config; then
-
         echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
-
       else
-
         echo "[FAIL] DCE is not enabled"
         exit 1
-
       fi
 
       echo
@@ -1051,5 +1035,56 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
         stack-protector-prepare.log
         arm64-test/.config
         arm64-test/vmlinux
+      if-no-files-found: warn
+      retention-days: 7
+
+  # ============================================================
+  # 23. EXTRACT BUILD ERRORS
+  # ============================================================
+  - name: Extract Build Errors
+    if: always()
+    run: |
+      set +e
+
+      echo "============================================================"
+      echo "EXTRACTING BUILD ERRORS"
+      echo "============================================================"
+
+      if [ -f lto-dce-polly-mlgo-vmlinux-build.log ]; then
+
+        grep -n -E \
+          "error:|fatal error:|ld.lld: error:|undefined symbol|undefined reference|make([0-9]+)?: \*\*\*|ninja: build stopped" \
+          lto-dce-polly-mlgo-vmlinux-build.log \
+          > build-errors.txt || true
+
+        echo
+        echo "============================================================"
+        echo "ERROR SUMMARY"
+        echo "============================================================"
+
+        if [ -s build-errors.txt ]; then
+          cat build-errors.txt
+        else
+          echo "[INFO] No matching compiler/linker error found in build log"
+        fi
+
+      else
+
+        echo "[INFO] Build log does not exist"
+
+      fi
+
+  # ============================================================
+  # 24. UPLOAD FULL BUILD LOG
+  # ============================================================
+  - name: Upload Full Build Log
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: full-build-log-clang-r547379
+      path: |
+        lto-dce-polly-mlgo-vmlinux-build.log
+        stack-protector-prepare.log
+        build-errors.txt
       if-no-files-found: warn
       retention-days: 7
