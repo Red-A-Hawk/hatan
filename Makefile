@@ -972,7 +972,7 @@ endif
 endif
 
 ifdef CONFIG_MLGO_CLANG
-KBUILD_CFLAGS += -mllvm -regalloc-evict-advisor=release
+KBUILD_CFLAGS += -mllvm -regalloc-enable-advisor=release
 endif
 
 ifdef CONFIG_CFI_CLANG
