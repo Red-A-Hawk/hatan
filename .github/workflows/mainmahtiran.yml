@@ -1,4 +1,4 @@
-name: Check Dead Code Data Elimination
+name: Check ARM64 LD Dead Code Support
 
 on:
   workflow_dispatch:
@@ -8,119 +8,387 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
       - name: Checkout Kernel Branch 16
         uses: actions/checkout@v4
         with:
           ref: 16
           fetch-depth: 1
 
-      - name: Verify Branch
+      # ============================================================
+      # 2. GIT INFORMATION
+      # ============================================================
+      - name: Git Information
         run: |
           echo "=========================================="
           echo " GIT INFORMATION"
           echo "=========================================="
+
           echo "Branch:"
           git branch --show-current
+
           echo
           echo "Commit:"
           git rev-parse HEAD
-          echo
 
-      - name: Check LD Dead Code Data Elimination
+          echo
+          echo "Kernel:"
+          make kernelversion || true
+
+      # ============================================================
+      # 3. KCONFIG SOURCE ANALYSIS
+      # ============================================================
+      - name: Check Kconfig Support
         run: |
           echo "=========================================="
-          echo " LD_DEAD_CODE_DATA_ELIMINATION ANALYSIS"
+          echo " KCONFIG SUPPORT ANALYSIS"
           echo "=========================================="
-          echo
 
-          echo ">>> Searching ARM64 + Kconfig + Makefile + Scripts..."
           echo
-
+          echo ">>> Kconfig definition:"
           grep -Rns \
             --exclude-dir=.git \
-            -E "LD_DEAD_CODE_DATA_ELIMINATION|--gc-sections|-ffunction-sections|-fdata-sections" \
-            arch/arm64 \
+            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/Kconfig \
+            arch/arm64 \
+            2>/dev/null || true
+
+          echo
+          echo ">>> Kconfig help:"
+          grep -Rns -A12 -B2 \
+            --exclude-dir=.git \
+            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/Kconfig \
+            arch/arm64 \
+            2>/dev/null || true
+
+          echo
+          echo ">>> ARM64 select:"
+          if grep -Rns \
+            --exclude-dir=.git \
+            "select LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64 \
+            2>/dev/null; then
+            echo
+            echo "RESULT: ARM64 SELECTS THE OPTION"
+          else
+            echo
+            echo "RESULT: ARM64 DOES NOT SELECT THE OPTION"
+          fi
+
+      # ============================================================
+      # 4. ARM64 LINKER / SECTION ANALYSIS
+      # ============================================================
+      - name: Check ARM64 Linker Section Support
+        run: |
+          echo "=========================================="
+          echo " ARM64 LINKER / SECTION ANALYSIS"
+          echo "=========================================="
+
+          echo
+          echo ">>> TEXT / DATA / BSS section handling:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "\.text\.\*|\.data\.\*|\.bss\.\*|TEXT_MAIN|DATA_MAIN|BSS_MAIN" \
+            arch/arm64 \
+            include/asm-generic \
+            2>/dev/null || true
+
+          echo
+          echo ">>> KEEP() directives:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "KEEP\(" \
+            arch/arm64 \
+            2>/dev/null || true
+
+          echo
+          echo ">>> ENTRY() directives:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "ENTRY\(" \
+            arch/arm64 \
+            2>/dev/null || true
+
+          echo
+          echo ">>> Linker scripts:"
+          find arch/arm64 -type f \
+            \( -name "*.lds" -o -name "*.lds.S" \) \
+            -print 2>/dev/null || true
+
+      # ============================================================
+      # 5. ENTRY POINT / GC PROTECTION ANALYSIS
+      # ============================================================
+      - name: Check ARM64 Entry Point Protection
+        run: |
+          echo "=========================================="
+          echo " ARM64 ENTRY POINT / GC PROTECTION"
+          echo "=========================================="
+
+          echo
+          echo ">>> __init / entry related symbols:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "__init|__entry|ENTRY" \
+            arch/arm64 \
+            2>/dev/null | head -n 300 || true
+
+          echo
+          echo ">>> Explicit section retention:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "KEEP\(|KEEP.*\.text|KEEP.*\.data|KEEP.*\.bss" \
+            arch/arm64 \
+            2>/dev/null || true
+
+          echo
+          echo ">>> ARM64 linker script section definitions:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E "\.text|\.rodata|\.data|\.bss" \
+            arch/arm64 \
+            --include="*.lds" \
+            --include="*.lds.S" \
+            2>/dev/null || true
+
+      # ============================================================
+      # 6. BUILD SYSTEM ANALYSIS
+      # ============================================================
+      - name: Check Build System
+        run: |
+          echo "=========================================="
+          echo " BUILD SYSTEM ANALYSIS"
+          echo "=========================================="
+
+          echo
+          echo ">>> LD_DEAD_CODE_DATA_ELIMINATION references:"
+          grep -Rns \
+            --exclude-dir=.git \
+            "LD_DEAD_CODE_DATA_ELIMINATION" \
             Makefile \
+            arch \
+            scripts \
+            include \
+            2>/dev/null || true
+
+          echo
+          echo ">>> Section compilation flags:"
+          grep -Rns \
+            --exclude-dir=.git \
+            -E -- "-ffunction-sections|-fdata-sections" \
+            Makefile \
+            arch \
             scripts \
             2>/dev/null || true
 
           echo
-          echo "=========================================="
-          echo " ARM64 SELECT CHECK"
-          echo "=========================================="
-
-          if grep -Rns \
-            --exclude-dir=.git \
-            "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64 \
-            2>/dev/null; then
-
-            echo
-            echo "RESULT: ARM64 SELECTS LD_DEAD_CODE_DATA_ELIMINATION"
-          else
-
-            echo
-            echo "RESULT: ARM64 DOES NOT SELECT LD_DEAD_CODE_DATA_ELIMINATION"
-          fi
-
-          echo
-          echo "=========================================="
-          echo " KCONFIG DEFINITION CHECK"
-          echo "=========================================="
-
-          if grep -Rns \
-            --exclude-dir=.git \
-            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/Kconfig \
-            arch/arm64 \
-            2>/dev/null; then
-
-            echo
-            echo "RESULT: KCONFIG OPTION EXISTS"
-          else
-
-            echo
-            echo "RESULT: KCONFIG OPTION NOT FOUND"
-          fi
-
-          echo
-          echo "=========================================="
-          echo " FINAL SUMMARY"
-          echo "=========================================="
-
-          echo "Source option:"
-          grep -Rns \
-            --exclude-dir=.git \
-            -E "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/Kconfig \
-            arch/arm64 \
-            2>/dev/null || echo "NOT FOUND"
-
-          echo
-          echo "ARM64 select:"
-          grep -Rns \
-            --exclude-dir=.git \
-            "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64 \
-            2>/dev/null || echo "NOT FOUND"
-
-          echo
-          echo "Linker GC:"
+          echo ">>> Linker garbage collection:"
           grep -Rns \
             --exclude-dir=.git \
             -- "--gc-sections" \
-            arch/arm64 \
             Makefile \
+            arch \
             scripts \
-            2>/dev/null || echo "NOT FOUND"
+            2>/dev/null || true
+
+      # ============================================================
+      # 7. PREPARE ARM64 KCONFIG
+      # ============================================================
+      - name: Prepare ARM64 Kconfig
+        run: |
+          echo "=========================================="
+          echo " PREPARING ARM64 KCONFIG"
+          echo "=========================================="
+
+          mkdir -p "$GITHUB_WORKSPACE/kconfig-test"
+
+          make \
+            O="$GITHUB_WORKSPACE/kconfig-test" \
+            ARCH=arm64 \
+            vendor/violet-perf_defconfig
 
           echo
-          echo "Function sections:"
-          grep -Rns \
+          echo "Initial generated configuration:"
+          grep -n \
+            -E "^CONFIG_(LTO|LTO_CLANG|THINLTO|LD_DEAD_CODE_DATA_ELIMINATION)=" \
+            "$GITHUB_WORKSPACE/kconfig-test/.config" \
+            || true
+
+      # ============================================================
+      # 8. KCONFIG TEST: DISABLED
+      # ============================================================
+      - name: Kconfig Test - LD Dead Code Disabled
+        run: |
+          echo "=========================================="
+          echo " KCONFIG TEST: DISABLED"
+          echo "=========================================="
+
+          scripts/config \
+            --file "$GITHUB_WORKSPACE/kconfig-test/.config" \
+            --disable LD_DEAD_CODE_DATA_ELIMINATION
+
+          make \
+            O="$GITHUB_WORKSPACE/kconfig-test" \
+            ARCH=arm64 \
+            olddefconfig
+
+          echo
+          echo "Final configuration with option disabled:"
+          grep -n \
+            -E "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            "$GITHUB_WORKSPACE/kconfig-test/.config" \
+            || true
+
+          echo
+          if grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n" \
+            "$GITHUB_WORKSPACE/kconfig-test/.config"; then
+
+            echo "RESULT: KCONFIG ACCEPTS LD_DEAD_CODE_DATA_ELIMINATION=n"
+
+          else
+
+            echo "RESULT: UNEXPECTED CONFIGURATION STATE"
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 9. KCONFIG TEST: ENABLED
+      # ============================================================
+      - name: Kconfig Test - LD Dead Code Enabled
+        run: |
+          echo "=========================================="
+          echo " KCONFIG TEST: ENABLED"
+          echo "=========================================="
+
+          scripts/config \
+            --file "$GITHUB_WORKSPACE/kconfig-test/.config" \
+            --enable LD_DEAD_CODE_DATA_ELIMINATION
+
+          make \
+            O="$GITHUB_WORKSPACE/kconfig-test" \
+            ARCH=arm64 \
+            olddefconfig
+
+          echo
+          echo "Final configuration with option enabled:"
+          grep -n \
+            -E "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            "$GITHUB_WORKSPACE/kconfig-test/.config" \
+            || true
+
+          echo
+          if grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" \
+            "$GITHUB_WORKSPACE/kconfig-test/.config"; then
+
+            echo "RESULT: KCONFIG ACCEPTS LD_DEAD_CODE_DATA_ELIMINATION=y"
+
+          else
+
+            echo "RESULT: KCONFIG REFUSES LD_DEAD_CODE_DATA_ELIMINATION=y"
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 10. BUILT CONFIGURATION ANALYSIS
+      # ============================================================
+      - name: Built Configuration Analysis
+        run: |
+          echo "=========================================="
+          echo " BUILT CONFIGURATION ANALYSIS"
+          echo "=========================================="
+
+          CONFIG="$GITHUB_WORKSPACE/kconfig-test/.config"
+
+          echo
+          echo ">>> Final ARM64 configuration:"
+          grep -n \
+            -E "^CONFIG_(LTO|LTO_CLANG|THINLTO|LD_DEAD_CODE_DATA_ELIMINATION)=" \
+            "$CONFIG" \
+            || true
+
+          echo
+          echo ">>> Checking expected build flags..."
+
+          if grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" \
+            "$CONFIG"; then
+
+            echo
+            echo "LD_DEAD_CODE_DATA_ELIMINATION = y"
+
+            echo
+            echo "Expected compiler flags:"
+            echo "  -ffunction-sections"
+            echo "  -fdata-sections"
+
+            echo
+            echo "Expected linker flag:"
+            echo "  --gc-sections"
+
+          else
+
+            echo
+            echo "LD_DEAD_CODE_DATA_ELIMINATION is not enabled."
+
+          fi
+
+      # ============================================================
+      # 11. FINAL VERDICT
+      # ============================================================
+      - name: Final Verdict
+        run: |
+          echo "=========================================="
+          echo " FINAL VERDICT"
+          echo "=========================================="
+
+          CONFIG="$GITHUB_WORKSPACE/kconfig-test/.config"
+
+          echo
+          echo "Kconfig symbol:"
+          grep -n \
+            -E "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            "$CONFIG" \
+            || true
+
+          echo
+          echo "ARM64 select:"
+          if grep -Rqs \
             --exclude-dir=.git \
-            -E -- "-ffunction-sections|-fdata-sections" \
+            "select LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/arm64 \
-            Makefile \
-            scripts \
-            2>/dev/null || echo "NOT FOUND"
+            2>/dev/null; then
+
+            echo "YES"
+
+          else
+
+            echo "NO"
+
+          fi
+
+          echo
+          echo "Kconfig y test:"
+          if grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y" \
+            "$CONFIG"; then
+
+            echo "PASS - ARM64 Kconfig accepts y"
+
+          else
+
+            echo "FAIL - ARM64 Kconfig does not retain y"
+            exit 1
+
+          fi
+
+          echo
+          echo "=========================================="
+          echo " END OF ARM64 LD DEAD CODE SUPPORT CHECK"
+          echo "=========================================="
