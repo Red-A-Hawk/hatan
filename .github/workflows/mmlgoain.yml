@@ -1,0 +1,771 @@
+name: Test ARM64 MLGO r547379
+
+"on":
+  workflow_dispatch:
+
+jobs:
+  test-mlgo:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+      - name: Checkout Kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. INSTALL DEPENDENCIES
+      # ============================================================
+      - name: Install Dependencies
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            wget \
+            curl \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            libssl-dev \
+            binutils-aarch64-linux-gnu \
+            device-tree-compiler \
+            cpio \
+            python3 \
+            unzip \
+            zip
+
+      # ============================================================
+      # 3. DOWNLOAD TOOLCHAINS
+      # ============================================================
+      - name: Download Toolchains
+        run: |
+          set -e
+
+          mkdir -p "$GITHUB_WORKSPACE/toolchains"
+          cd "$GITHUB_WORKSPACE/toolchains"
+
+          echo "============================================================"
+          echo "Downloading crDroid Clang r547379"
+          echo "============================================================"
+
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang
+
+          echo
+          echo "============================================================"
+          echo "Downloading GCC64 4.9"
+          echo "============================================================"
+
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
+
+          echo
+          echo "============================================================"
+          echo "Downloading GCC32 4.9"
+          echo "============================================================"
+
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
+
+      # ============================================================
+      # 4. SET TOOLCHAIN ENVIRONMENT
+      # ============================================================
+      - name: Setup Toolchain Environment
+        run: |
+          set -e
+
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchains/clang"
+          export GCC64_PATH="$GITHUB_WORKSPACE/toolchains/gcc64"
+          export GCC32_PATH="$GITHUB_WORKSPACE/toolchains/gcc32"
+
+          export CROSS_COMPILE="$GCC64_PATH/bin/aarch64-linux-android-"
+          export CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-linux-androideabi-"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
+
+          echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GCC64_PATH" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GCC32_PATH" >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=$CLANG_TRIPLE" >> "$GITHUB_ENV"
+
+          echo "$CLANG_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC64_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC32_PATH/bin" >> "$GITHUB_PATH"
+
+      # ============================================================
+      # 5. VERIFY TOOLCHAINS
+      # ============================================================
+      - name: Verify Toolchains
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "TOOLCHAIN INFORMATION"
+          echo "============================================================"
+
+          echo
+          echo "Clang:"
+          clang --version
+
+          echo
+          echo "LLD:"
+          ld.lld --version
+
+          echo
+          echo "LLVM AR:"
+          llvm-ar --version | head -n 1
+
+          echo
+          echo "LLVM NM:"
+          llvm-nm --version | head -n 1
+
+          echo
+          echo "LLVM OBJCOPY:"
+          llvm-objcopy --version | head -n 1
+
+          echo
+          echo "LLVM OBJDUMP:"
+          llvm-objdump --version | head -n 1
+
+          echo
+          echo "LLVM READELF:"
+          llvm-readelf --version | head -n 1
+
+          echo
+          echo "GCC64:"
+          aarch64-linux-android-gcc --version | head -n 1
+
+          echo
+          echo "GCC32:"
+          arm-linux-androideabi-gcc --version | head -n 1
+
+          echo
+          echo "============================================================"
+          echo "TOOLCHAIN PATHS"
+          echo "============================================================"
+
+          command -v clang
+          command -v ld.lld
+          command -v llvm-ar
+          command -v llvm-nm
+          command -v llvm-objcopy
+          command -v llvm-objdump
+          command -v llvm-strip
+          command -v llvm-readelf
+          command -v aarch64-linux-android-gcc
+          command -v arm-linux-androideabi-gcc
+
+      # ============================================================
+      # 6. CHECK MLGO SUPPORT
+      # ============================================================
+      - name: Check MLGO Toolchain Support
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "CHECK MLGO TOOLCHAIN SUPPORT"
+          echo "============================================================"
+
+          cat > /tmp/mlgo-test.c <<'EOF'
+          int test_mlgo(int a, int b)
+          {
+              return a + b;
+          }
+          EOF
+
+          clang \
+            -target aarch64-linux-gnu \
+            -O2 \
+            -mllvm -regalloc-evict-advisor=release \
+            -c /tmp/mlgo-test.c \
+            -o /tmp/mlgo-test.o
+
+          echo
+          echo "[OK] Clang accepted MLGO release advisor"
+
+      # ============================================================
+      # 7. RUN VIOLET DEFCONFIG
+      # ============================================================
+      - name: Run Violet Defconfig
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "VIOLET PERF DEFCONFIG"
+          echo "============================================================"
+
+          make O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vendor/violet-perf_defconfig
+
+      # ============================================================
+      # 8. VERIFY MLGO CONFIGURATION
+      # ============================================================
+      - name: Verify MLGO Configuration
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "MLGO CONFIGURATION CHECK"
+          echo "============================================================"
+
+          echo
+          echo "MLGO:"
+          grep -n \
+            "CONFIG_MLGO_CLANG" \
+            arm64-test/.config
+
+          echo
+          echo "LTO:"
+          grep -E \
+            "CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=" \
+            arm64-test/.config \
+            || true
+
+          echo
+          echo "Polly:"
+          grep \
+            "CONFIG_POLLY_CLANG" \
+            arm64-test/.config \
+            || true
+
+          echo
+          echo "DCE:"
+          grep \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arm64-test/.config \
+            || true
+
+          echo
+          echo ">>> Verify MLGO=y"
+
+          if grep -q \
+              "^CONFIG_MLGO_CLANG=y$" \
+              arm64-test/.config; then
+
+            echo "[OK] CONFIG_MLGO_CLANG=y"
+
+          else
+
+            echo "[FAIL] CONFIG_MLGO_CLANG is not enabled"
+            exit 1
+
+          fi
+
+          echo
+          echo ">>> Verify Polly=n"
+
+          if grep -q \
+              "^CONFIG_POLLY_CLANG=n$" \
+              arm64-test/.config; then
+
+            echo "[OK] CONFIG_POLLY_CLANG=n"
+
+          else
+
+            echo "[FAIL] Polly is enabled"
+            exit 1
+
+          fi
+
+          echo
+          echo ">>> Verify DCE=n"
+
+          if grep -q \
+              "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n$" \
+              arm64-test/.config; then
+
+            echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n"
+
+          else
+
+            echo "[FAIL] DCE is enabled"
+            exit 1
+
+          fi
+
+          echo
+          echo ">>> Verify LTO_CLANG=n"
+
+          if grep -q \
+              "^CONFIG_LTO_CLANG=n$" \
+              arm64-test/.config; then
+
+            echo "[OK] CONFIG_LTO_CLANG=n"
+
+          else
+
+            echo "[FAIL] LTO_CLANG is enabled"
+            exit 1
+
+          fi
+
+          echo
+          echo ">>> Verify THINLTO=n"
+
+          if grep -q \
+              "^CONFIG_THINLTO=n$" \
+              arm64-test/.config; then
+
+            echo "[OK] CONFIG_THINLTO=n"
+
+          else
+
+            echo "[FAIL] THINLTO is enabled"
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 9. DISABLE CC_STACKPROTECTOR_STRONG (WORKAROUND)
+      # ============================================================
+      - name: Disable CC_STACKPROTECTOR_STRONG (workaround)
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "DISABLE CC_STACKPROTECTOR_STRONG / REGULAR (WORKAROUND)"
+          echo "============================================================"
+
+          echo
+          echo "Before:"
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            arm64-test/.config \
+            || echo "(no CC_STACKPROTECTOR lines present)"
+
+          sed -i \
+            -e '/CONFIG_CC_STACKPROTECTOR_REGULAR/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_STRONG/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_AUTO/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_NONE/d' \
+            arm64-test/.config
+
+          {
+            echo "# CONFIG_CC_STACKPROTECTOR_REGULAR is not set"
+            echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set"
+            echo "# CONFIG_CC_STACKPROTECTOR_AUTO is not set"
+            echo "CONFIG_CC_STACKPROTECTOR_NONE=y"
+          } >> arm64-test/.config
+
+          echo
+          echo "After:"
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            arm64-test/.config
+
+          echo
+          echo "[OK] Stack protector workaround active"
+
+      # ============================================================
+      # 10. OLDDEFCONFIG
+      # ============================================================
+      - name: Run Olddefconfig
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          make O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            olddefconfig
+
+      # ============================================================
+      # 11. FINAL CONFIGURATION CHECK
+      # ============================================================
+      - name: Final Configuration Check
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "FINAL MLGO CONFIGURATION"
+          echo "============================================================"
+
+          grep \
+            -E \
+            "CONFIG_MLGO_CLANG|CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=|CONFIG_POLLY_CLANG|CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arm64-test/.config
+
+          echo
+          echo ">>> Verify MLGO=y"
+
+          grep -q \
+            "^CONFIG_MLGO_CLANG=y$" \
+            arm64-test/.config
+
+          echo "[OK] MLGO=y"
+
+          echo
+          echo ">>> Verify Polly=n"
+
+          grep -q \
+            "^CONFIG_POLLY_CLANG=n$" \
+            arm64-test/.config
+
+          echo "[OK] Polly=n"
+
+          echo
+          echo ">>> Verify DCE=n"
+
+          grep -q \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n$" \
+            arm64-test/.config
+
+          echo "[OK] DCE=n"
+
+          echo
+          echo ">>> Verify LTO_CLANG=n"
+
+          grep -q \
+            "^CONFIG_LTO_CLANG=n$" \
+            arm64-test/.config
+
+          echo "[OK] LTO_CLANG=n"
+
+          echo
+          echo ">>> Verify THINLTO=n"
+
+          grep -q \
+            "^CONFIG_THINLTO=n$" \
+            arm64-test/.config
+
+          echo "[OK] THINLTO=n"
+
+      # ============================================================
+      # 12. PREPARE
+      # ============================================================
+      - name: Prepare Kernel
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          make O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            prepare
+
+      # ============================================================
+      # 13. MODULES_PREPARE
+      # ============================================================
+      - name: Modules Prepare
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          make O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            modules_prepare
+
+      # ============================================================
+      # 14. GENERATED CONFIGURATION CHECK
+      # ============================================================
+      - name: Generated Configuration Check
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "GENERATED CONFIGURATION CHECK"
+          echo "============================================================"
+
+          if [ ! -f \
+              arm64-test/include/config/auto.conf ]; then
+
+            echo "[FAIL] include/config/auto.conf not generated"
+            exit 1
+
+          fi
+
+          if grep -q \
+              "^CONFIG_MLGO_CLANG=y$" \
+              arm64-test/include/config/auto.conf; then
+
+            echo "[OK] auto.conf contains MLGO=y"
+
+          else
+
+            echo "[FAIL] auto.conf does not contain MLGO=y"
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 15. MLGO VMLINUX BUILD
+      #
+      # REAL vmlinux BUILD.
+      #
+      # MLGO ONLY.
+      # No LTO.
+      # No ThinLTO.
+      # No Polly.
+      # No DCE.
+      # No PGO.
+      # No BOLT.
+      # ============================================================
+      - name: Build MLGO vmlinux
+        run: |
+          set -o pipefail
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "BUILDING REAL MLGO VMLINUX"
+          echo "============================================================"
+
+          make V=1 \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vmlinux \
+            2>&1 | tee mlgo-vmlinux-build.log
+
+      # ============================================================
+      # 16. VERIFY MLGO FLAG
+      # ============================================================
+      - name: Verify MLGO Flag
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "VERIFY MLGO FLAG"
+          echo "============================================================"
+
+          echo
+          echo ">>> -mllvm -regalloc-evict-advisor=release"
+
+          if grep -q \
+              -- "-mllvm -regalloc-evict-advisor=release" \
+              mlgo-vmlinux-build.log; then
+
+            echo "[OK] MLGO flag found"
+
+          else
+
+            echo "[FAIL] MLGO flag NOT found"
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 17. VERIFY NO POLLY / DCE FLAGS
+      # ============================================================
+      - name: Verify MLGO Only
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "VERIFY MLGO ONLY"
+          echo "============================================================"
+
+          if grep -q \
+              -- "-mllvm -polly" \
+              mlgo-vmlinux-build.log; then
+
+            echo "[FAIL] Polly flag found"
+            exit 1
+
+          else
+
+            echo "[OK] Polly flag not found"
+
+          fi
+
+          if grep -q \
+              -- "-ffunction-sections" \
+              mlgo-vmlinux-build.log; then
+
+            echo "[FAIL] DCE function sections flag found"
+            exit 1
+
+          else
+
+            echo "[OK] -ffunction-sections not found"
+
+          fi
+
+          if grep -q \
+              -- "-fdata-sections" \
+              mlgo-vmlinux-build.log; then
+
+            echo "[FAIL] DCE data sections flag found"
+            exit 1
+
+          else
+
+            echo "[OK] -fdata-sections not found"
+
+          fi
+
+          if grep -q \
+              -- "--gc-sections" \
+              mlgo-vmlinux-build.log; then
+
+            echo "[FAIL] DCE linker flag found"
+            exit 1
+
+          else
+
+            echo "[OK] --gc-sections not found"
+
+          fi
+
+      # ============================================================
+      # 18. VERIFY VMLINUX
+      # ============================================================
+      - name: Verify vmlinux
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "VERIFY VMLINUX"
+          echo "============================================================"
+
+          if [ -f arm64-test/vmlinux ]; then
+
+            echo "[OK] arm64-test/vmlinux exists"
+
+            ls -lh arm64-test/vmlinux
+
+          else
+
+            echo "[FAIL] arm64-test/vmlinux was not produced"
+            exit 1
+
+          fi
+
+      # ============================================================
+      # 19. FINAL MLGO RESULT
+      # ============================================================
+      - name: Final MLGO Result
+        run: |
+          set -e
+
+          echo
+          echo "============================================================"
+          echo "             MLGO BUILD TEST RESULT"
+          echo "============================================================"
+
+          echo
+          echo "CONFIGURATION:"
+
+          grep \
+            -E \
+            "CONFIG_MLGO_CLANG|CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=|CONFIG_POLLY_CLANG|CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arm64-test/.config
+
+          echo
+          echo "MLGO FLAG:"
+
+          grep \
+            -n \
+            -- "-mllvm -regalloc-evict-advisor=release" \
+            mlgo-vmlinux-build.log
+
+          echo
+          echo "VMLINUX:"
+
+          ls -lh arm64-test/vmlinux
+
+          echo
+          echo "============================================================"
+          echo "[OK] MLGO VMLINUX BUILD SUCCESSFUL"
+          echo "============================================================"
+
+      # ============================================================
+      # 20. UPLOAD MLGO DIAGNOSTIC
+      # ============================================================
+      - name: Upload MLGO Diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlgo-diagnostic-clang-r547379
+          path: |
+            mlgo-vmlinux-build.log
+            arm64-test/.config
+            arm64-test/vmlinux
+          if-no-files-found: warn
+          retention-days: 7
