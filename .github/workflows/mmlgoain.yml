@@ -194,7 +194,7 @@ jobs:
           clang \
             -target aarch64-linux-gnu \
             -O2 \
-            -mllvm -regalloc-evict-advisor=release \
+            -mllvm -regalloc-enable-advisor=release \
             -c /tmp/mlgo-test.c \
             -o /tmp/mlgo-test.o
 
@@ -324,7 +324,7 @@ jobs:
               "^CONFIG_LTO_CLANG=n$" \
               arm64-test/.config; then
 
-            echo "[OK] CONFIG_LTO_CLANG=n"
+            echo "[OK] LTO_CLANG=n"
 
           else
 
@@ -340,7 +340,7 @@ jobs:
               "^CONFIG_THINLTO=n$" \
               arm64-test/.config; then
 
-            echo "[OK] CONFIG_THINLTO=n"
+            echo "[OK] THINLTO=n"
 
           else
 
@@ -615,10 +615,10 @@ jobs:
           echo "============================================================"
 
           echo
-          echo ">>> -mllvm -regalloc-evict-advisor=release"
+          echo ">>> -mllvm -regalloc-enable-advisor=release"
 
           if grep -q \
-              -- "-mllvm -regalloc-evict-advisor=release" \
+              -- "-mllvm -regalloc-enable-advisor=release" \
               mlgo-vmlinux-build.log; then
 
             echo "[OK] MLGO flag found"
@@ -742,7 +742,7 @@ jobs:
 
           grep \
             -n \
-            -- "-mllvm -regalloc-evict-advisor=release" \
+            -- "-mllvm -regalloc-enable-advisor=release" \
             mlgo-vmlinux-build.log
 
           echo
