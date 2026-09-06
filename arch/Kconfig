@@ -694,6 +694,24 @@ config POLLY_CLANG
 
 	  If unsure, say N.
 
+config ARCH_SUPPORTS_MLGO_CLANG
+	bool
+	help
+	  An architecture should select this if it supports
+	  building with clang's MLGO register allocation advisor.
+
+config MLGO_CLANG
+	bool "Use clang MLGO register allocation advisor (EXPERIMENTAL)"
+	depends on ARCH_SUPPORTS_MLGO_CLANG
+	help
+	  This option enables LLVM MLGO's register allocation
+	  eviction advisor during compilation.
+
+	  If you select this option, you must compile the kernel with a
+	  clang toolchain that was built with MLGO support.
+
+	  If unsure, say N.
+
 config CFI
 	bool
 
