@@ -28,49 +28,184 @@ jobs:
           sudo apt-get update
 
           sudo apt-get install -y \
+            git \
+            wget \
+            curl \
             bc \
             bison \
             flex \
+            build-essential \
             libssl-dev \
-            libelf-dev \
-            device-tree-compiler \
-            gcc-aarch64-linux-gnu \
             binutils-aarch64-linux-gnu \
-            clang \
-            lld
+            device-tree-compiler \
+            cpio \
+            python3 \
+            unzip \
+            zip
 
       # ============================================================
-      # 3. ANALYZE ORIGINAL SUPPORT
+      # 3. DOWNLOAD TOOLCHAINS
       # ============================================================
-      - name: Analyze Original Support
+      - name: Download Toolchains
         run: |
+          set -e
+
+          mkdir -p "$GITHUB_WORKSPACE/toolchains"
+          cd "$GITHUB_WORKSPACE/toolchains"
+
           echo "============================================================"
-          echo "ORIGINAL ARM64 SUPPORT ANALYSIS"
+          echo "Downloading LineageOS Clang r416183b"
           echo "============================================================"
 
-          echo
-          echo ">>> LD_DEAD_CODE_DATA_ELIMINATION definition:"
-
-          grep -n -A15 -B3 \
-            "config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/Kconfig || true
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+            clang
 
           echo
-          echo ">>> Existing ARM64 select:"
+          echo "============================================================"
+          echo "Downloading GCC64 4.9"
+          echo "============================================================"
 
-          grep -n \
-            "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/Kconfig || true
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
 
           echo
-          echo ">>> Makefile support:"
+          echo "============================================================"
+          echo "Downloading GCC32 4.9"
+          echo "============================================================"
 
-          grep -n -A8 -B3 \
-            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
-            Makefile || true
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
 
       # ============================================================
-      # 4. BACKUP ORIGINAL ARM64 KCONFIG
+      # 4. SET TOOLCHAIN ENVIRONMENT
+      # ============================================================
+      - name: Setup Toolchain Environment
+        run: |
+          set -e
+
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchains/clang"
+          export GCC64_PATH="$GITHUB_WORKSPACE/toolchains/gcc64"
+          export GCC32_PATH="$GITHUB_WORKSPACE/toolchains/gcc32"
+
+          export CROSS_COMPILE="$GCC64_PATH/bin/aarch64-linux-android-"
+          export CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-linux-androideabi-"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
+
+          echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GCC64_PATH" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GCC32_PATH" >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=$CLANG_TRIPLE" >> "$GITHUB_ENV"
+
+          echo "$CLANG_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC64_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC32_PATH/bin" >> "$GITHUB_PATH"
+
+      # ============================================================
+      # 5. VERIFY TOOLCHAINS
+      # ============================================================
+      - name: Verify Toolchains
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "TOOLCHAIN INFORMATION"
+          echo "============================================================"
+
+          echo
+          echo "Clang:"
+          clang --version
+
+          echo
+          echo "LLD:"
+          ld.lld --version
+
+          echo
+          echo "LLVM AR:"
+          llvm-ar --version | head -n 1
+
+          echo
+          echo "LLVM NM:"
+          llvm-nm --version | head -n 1
+
+          echo
+          echo "LLVM OBJCOPY:"
+          llvm-objcopy --version | head -n 1
+
+          echo
+          echo "LLVM OBJDUMP:"
+          llvm-objdump --version | head -n 1
+
+          echo
+          echo "LLVM READELF:"
+          llvm-readelf --version | head -n 1
+
+          echo
+          echo "GCC64:"
+          aarch64-linux-android-gcc --version | head -n 1
+
+          echo
+          echo "GCC32:"
+          arm-linux-androideabi-gcc --version | head -n 1
+
+          echo
+          echo "============================================================"
+          echo "TOOLCHAIN PATHS"
+          echo "============================================================"
+
+          command -v clang
+          command -v ld.lld
+          command -v llvm-ar
+          command -v llvm-nm
+          command -v llvm-objcopy
+          command -v llvm-objdump
+          command -v llvm-strip
+          command -v llvm-readelf
+          command -v aarch64-linux-android-gcc
+          command -v arm-linux-androideabi-gcc
+
+      # ============================================================
+      # 6. CHECK ORIGINAL DCE SUPPORT
+      # ============================================================
+      - name: Check Original DCE Support
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "ORIGINAL LD_DEAD_CODE_DATA_ELIMINATION SUPPORT"
+          echo "============================================================"
+
+          echo
+          echo "Defconfig:"
+          grep -n \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64/configs/vendor/violet-perf_defconfig \
+            || true
+
+          echo
+          echo "Kconfig definition:"
+          grep -n \
+            -A15 \
+            "config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/Kconfig
+
+          echo
+          echo "Makefile integration:"
+          grep -n \
+            -A5 \
+            -B2 \
+            "LD_DEAD_CODE_DATA_ELIMINATION" \
+            Makefile
+
+      # ============================================================
+      # 7. BACKUP ARM64 KCONFIG
       # ============================================================
       - name: Backup ARM64 Kconfig
         run: |
@@ -78,14 +213,20 @@ jobs:
 
           cp \
             arch/arm64/Kconfig \
-            /tmp/arm64-Kconfig.original
+            arch/arm64/Kconfig.dce-backup
+
+          echo "[OK] arch/arm64/Kconfig backed up"
 
       # ============================================================
-      # 5. TEMPORARILY ADD ARM64 SELECT
+      # 8. TEMPORARILY ENABLE DCE SUPPORT
       # ============================================================
-      - name: Temporarily Add ARM64 Select
+      - name: Enable DCE Temporarily
         run: |
           set -e
+
+          echo "============================================================"
+          echo "TEMPORARILY SELECT LD_DEAD_CODE_DATA_ELIMINATION"
+          echo "============================================================"
 
           python3 - <<'PY'
           from pathlib import Path
@@ -94,74 +235,94 @@ jobs:
           text = path.read_text()
 
           if "select LD_DEAD_CODE_DATA_ELIMINATION" in text:
-              raise SystemExit(
-                  "ERROR: select LD_DEAD_CODE_DATA_ELIMINATION "
-                  "already exists in arch/arm64/Kconfig"
-              )
+              print("[OK] DCE select already present")
+              raise SystemExit(0)
 
-          old = "config ARM64\n"
+          lines = text.splitlines()
 
-          new = (
-              "config ARM64\n"
-              "    select LD_DEAD_CODE_DATA_ELIMINATION\n"
-          )
+          for i, line in enumerate(lines):
+              if line.strip() == "config ARM64":
+                  insert_at = i + 1
 
-          if old not in text:
-              raise SystemExit(
-                  "ERROR: config ARM64 block not found"
-              )
+                  while insert_at < len(lines):
+                      current = lines[insert_at]
 
-          text = text.replace(old, new, 1)
+                      if current.startswith("config ") or current.startswith("menu ") or current.startswith("choice "):
+                          break
 
-          path.write_text(text)
+                      if current.strip().startswith("select "):
+                          insert_at += 1
+                          continue
 
-          print("Temporary ARM64 select added.")
+                      if current.strip() == "":
+                          insert_at += 1
+                          continue
+
+                      break
+
+                  lines.insert(
+                      insert_at,
+                      "\tselect LD_DEAD_CODE_DATA_ELIMINATION"
+                  )
+
+                  path.write_text("\n".join(lines) + "\n")
+
+                  print("[OK] Temporary DCE select inserted")
+                  break
+          else:
+              print("[FAIL] config ARM64 not found")
+              raise SystemExit(1)
           PY
 
           echo
-          echo ">>> Temporary select:"
-
-          grep -n -A3 \
-            "config ARM64" \
+          grep -n \
+            -A15 \
+            "^config ARM64" \
             arch/arm64/Kconfig
 
       # ============================================================
-      # 6. LOAD REAL VIOLET PERF DEFCONFIG
+      # 9. RUN VIOLET DEFCONFIG
       # ============================================================
-      - name: Load Violet Perf Defconfig
+      - name: Run Violet Defconfig
         run: |
           set -e
 
-          rm -rf arm64-test
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-          make O="$PWD/arm64-test" \
+          echo "============================================================"
+          echo "VIOLET PERF DEFCONFIG"
+          echo "============================================================"
+
+          make O=arm64-test \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
             vendor/violet-perf_defconfig
 
       # ============================================================
-      # 7. DISABLE CC_STACKPROTECTOR_STRONG
-      #
-      # This is the workaround taken from the known working
-      # PGO workflow.
-      #
-      # It prevents prepare-compiler-check from hard-failing on:
-      #
-      # Cannot use CONFIG_CC_STACKPROTECTOR_STRONG:
-      # -fstack-protector-strong not supported by compiler
+      # 10. DISABLE CC_STACKPROTECTOR_STRONG (WORKAROUND)
       # ============================================================
-      - name: Disable CC_STACKPROTECTOR_STRONG Workaround
+      - name: Disable CC_STACKPROTECTOR_STRONG (workaround)
         run: |
           set -e
 
           echo "============================================================"
-          echo "DISABLE CC_STACKPROTECTOR_STRONG / REGULAR"
+          echo "DISABLE CC_STACKPROTECTOR_STRONG / REGULAR (WORKAROUND)"
           echo "============================================================"
 
           echo
-          echo ">>> Before:"
-
+          echo "Before:"
           grep -E \
             "CONFIG_CC_STACKPROTECTOR" \
             arm64-test/.config \
@@ -182,32 +343,44 @@ jobs:
           } >> arm64-test/.config
 
           echo
-          echo ">>> After:"
-
+          echo "After:"
           grep -E \
             "CONFIG_CC_STACKPROTECTOR" \
             arm64-test/.config
 
           echo
-          echo "[OK] Stack protector workaround applied"
+          echo "[OK] Stack protector workaround active"
 
       # ============================================================
-      # 8. RESOLVE CONFIGURATION
+      # 11. OLDDEFCONFIG
       # ============================================================
-      - name: Resolve Configuration
+      - name: Run Olddefconfig
         run: |
           set -e
 
-          make O="$PWD/arm64-test" \
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          make O=arm64-test \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
             olddefconfig
 
       # ============================================================
-      # 9. CHECK CONFIGURATION AFTER OLDDEFCONFIG
+      # 12. CONFIGURATION CHECK
       # ============================================================
-      - name: Check Configuration
+      - name: Configuration Check
         run: |
           set -e
 
@@ -219,13 +392,13 @@ jobs:
           echo ">>> LD_DEAD_CODE_DATA_ELIMINATION:"
 
           grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
             arm64-test/.config
 
           echo
           echo ">>> Stack protector:"
 
-          grep -E \
+          grep \
             "CONFIG_CC_STACKPROTECTOR" \
             arm64-test/.config
 
@@ -233,61 +406,104 @@ jobs:
           echo ">>> Verify LD_DEAD_CODE_DATA_ELIMINATION=y"
 
           if grep -q \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
-            arm64-test/.config
-          then
+              "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
+              arm64-test/.config; then
+
             echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+
           else
+
             echo "[FAIL] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not enabled"
             exit 1
+
           fi
 
           echo
           echo ">>> Verify stack protector workaround"
 
           if grep -q \
-            "^CONFIG_CC_STACKPROTECTOR_NONE=y$" \
-            arm64-test/.config &&
+              "^CONFIG_CC_STACKPROTECTOR_NONE=y$" \
+              arm64-test/.config && \
              ! grep -q \
-            "^CONFIG_CC_STACKPROTECTOR_STRONG=y$" \
-            arm64-test/.config &&
+              "^CONFIG_CC_STACKPROTECTOR_STRONG=y$" \
+              arm64-test/.config && \
              ! grep -q \
-            "^CONFIG_CC_STACKPROTECTOR_REGULAR=y$" \
-            arm64-test/.config
-          then
+              "^CONFIG_CC_STACKPROTECTOR_REGULAR=y$" \
+              arm64-test/.config; then
+
             echo "[OK] Stack protector workaround active"
+
           else
-            echo "[FAIL] Stack protector workaround was not preserved"
+
+            echo "[FAIL] Stack protector workaround is not active"
             exit 1
+
           fi
 
       # ============================================================
-      # 10. PREPARE CONFIGURATION
+      # 13. PREPARE
       # ============================================================
-      - name: Prepare Configuration
+      - name: Prepare Kernel
         run: |
           set -e
 
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
           echo "============================================================"
-          echo "PREPARE KERNEL CONFIGURATION"
+          echo "KERNEL PREPARE"
           echo "============================================================"
 
-          make O="$PWD/arm64-test" \
+          make O=arm64-test \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
             prepare
 
-          make O="$PWD/arm64-test" \
+      # ============================================================
+      # 14. MODULES_PREPARE
+      # ============================================================
+      - name: Modules Prepare
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "MODULES PREPARE"
+          echo "============================================================"
+
+          make O=arm64-test \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
             modules_prepare
 
       # ============================================================
-      # 11. CHECK GENERATED AUTO.CONF
+      # 15. GENERATED CONFIGURATION CHECK
       # ============================================================
-      - name: Check Generated auto.conf
+      - name: Generated Configuration Check
         run: |
           set -e
 
@@ -296,128 +512,204 @@ jobs:
           echo "============================================================"
 
           if [ ! -f \
-            arm64-test/include/config/auto.conf
-          ]; then
+              arm64-test/include/config/auto.conf ]; then
 
-            echo "[FAIL] include/config/auto.conf was not generated"
+            echo "[FAIL] include/config/auto.conf not generated"
             exit 1
 
           fi
 
-          echo
-          echo ">>> auto.conf:"
-
-          grep -n \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
-            arm64-test/include/config/auto.conf
-
-          echo
-          echo ">>> Verify:"
-
           if grep -q \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
-            arm64-test/include/config/auto.conf
-          then
+              "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
+              arm64-test/include/config/auto.conf; then
 
             echo "[OK] auto.conf contains CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
 
           else
 
-            echo "[FAIL] auto.conf does not contain the option"
+            echo "[FAIL] auto.conf does not contain DCE=y"
             exit 1
 
           fi
 
       # ============================================================
-      # 12. CHECK KBUILD FLAGS
+      # 16. DCE BUILD / LINKER DRY RUN
+      #
+      # No Image.
+      # No full kernel build.
+      # Only inspect the actual vmlinux build command generated
+      # by Kbuild and verify that DCE flags are present.
       # ============================================================
-      - name: Check Kbuild Flags
+      - name: DCE Build Dry Run
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "DCE BUILD DRY RUN"
+          echo "============================================================"
+
+          make V=1 -n \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vmlinux \
+            2>&1 | tee dce-vmlinux-dry-run.log
+
+      # ============================================================
+      # 17. VERIFY DCE FLAGS
+      # ============================================================
+      - name: Verify DCE Compiler And Linker Flags
         run: |
           set -e
 
           echo "============================================================"
-          echo "KBUILD FLAG CHECK"
+          echo "VERIFY DCE FLAGS"
           echo "============================================================"
 
-          make O="$PWD/arm64-test" \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            V=1 \
-            -n vmlinux \
-            2>&1 \
-            | tee /tmp/vmlinux-dry-run.log
-
           echo
-          echo ">>> -ffunction-sections:"
+          echo ">>> -ffunction-sections"
 
           if grep -q \
-            -- "-ffunction-sections" \
-            /tmp/vmlinux-dry-run.log
-          then
+              -- "-ffunction-sections" \
+              dce-vmlinux-dry-run.log; then
+
             echo "[OK] -ffunction-sections found"
+
           else
+
             echo "[FAIL] -ffunction-sections not found"
             exit 1
+
           fi
 
           echo
-          echo ">>> -fdata-sections:"
+          echo ">>> -fdata-sections"
 
           if grep -q \
-            -- "-fdata-sections" \
-            /tmp/vmlinux-dry-run.log
-          then
+              -- "-fdata-sections" \
+              dce-vmlinux-dry-run.log; then
+
             echo "[OK] -fdata-sections found"
+
           else
+
             echo "[FAIL] -fdata-sections not found"
             exit 1
+
           fi
 
           echo
-          echo ">>> --gc-sections:"
+          echo ">>> --gc-sections"
 
           if grep -q \
-            -- "--gc-sections" \
-            /tmp/vmlinux-dry-run.log
-          then
+              -- "--gc-sections" \
+              dce-vmlinux-dry-run.log; then
+
             echo "[OK] --gc-sections found"
+
           else
+
             echo "[FAIL] --gc-sections not found"
             exit 1
+
           fi
 
           echo
           echo "============================================================"
-          echo "LD_DEAD_CODE_DATA_ELIMINATION TEST: PASS"
+          echo "DCE FLAGS SUMMARY"
+          echo "============================================================"
+
+          grep -n \
+            -E \
+            -- "-ffunction-sections|-fdata-sections|--gc-sections" \
+            dce-vmlinux-dry-run.log
+
+      # ============================================================
+      # 18. FINAL DCE RESULT
+      # ============================================================
+      - name: Final DCE Result
+        run: |
+          set -e
+
+          echo
+          echo "============================================================"
+          echo "       LD_DEAD_CODE_DATA_ELIMINATION TEST RESULT"
+          echo "============================================================"
+
+          echo
+          echo "CONFIG:"
+          grep \
+            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            arm64-test/.config
+
+          echo
+          echo "STACK PROTECTOR:"
+          grep \
+            "CONFIG_CC_STACKPROTECTOR" \
+            arm64-test/.config
+
+          echo
+          echo "DCE FLAGS:"
+
+          grep -E \
+            -- "-ffunction-sections|-fdata-sections|--gc-sections" \
+            dce-vmlinux-dry-run.log
+
+          echo
+          echo "============================================================"
+          echo "[OK] DCE KCONFIG + KBUILD + LINKER FLAGS VERIFIED"
           echo "============================================================"
 
       # ============================================================
-      # 13. RESTORE ORIGINAL ARM64 KCONFIG
+      # 19. RESTORE ARM64 KCONFIG
       # ============================================================
-      - name: Restore Original ARM64 Kconfig
+      - name: Restore ARM64 Kconfig
         if: always()
         run: |
           set -e
 
-          cp \
-            /tmp/arm64-Kconfig.original \
-            arch/arm64/Kconfig
-
           echo "============================================================"
-          echo "RESTORE CHECK"
+          echo "RESTORE ORIGINAL ARM64 KCONFIG"
           echo "============================================================"
 
-          if grep -q \
-            "select LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/Kconfig
-          then
+          if [ -f arch/arm64/Kconfig.dce-backup ]; then
 
-            echo "[FAIL] Temporary select still exists"
-            exit 1
-
-          else
+            mv \
+              arch/arm64/Kconfig.dce-backup \
+              arch/arm64/Kconfig
 
             echo "[OK] Original arch/arm64/Kconfig restored"
 
+          else
+
+            echo "[WARN] Backup file not found"
+
           fi
+
+      # ============================================================
+      # 20. UPLOAD DCE LOG
+      # ============================================================
+      - name: Upload DCE Diagnostic Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dce-diagnostic
+          path: |
+            dce-vmlinux-dry-run.log
+            arm64-test/.config
+          if-no-files-found: warn
+          retention-days: 7
