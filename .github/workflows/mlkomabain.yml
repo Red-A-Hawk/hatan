@@ -1,4 +1,4 @@
-name: Check LD_DEAD vv
+name: Check DCE Kconfig Result vv
 
 "on":
   workflow_dispatch:
@@ -15,65 +15,84 @@ jobs:
           ref: 16
           fetch-depth: 1
 
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev
+
       - name: Verify Branch
         run: |
-          echo "=== Git Branch ==="
+          echo "=== Branch ==="
           git branch --show-current
+          echo "=== Commit ==="
+          git rev-parse --short HEAD
 
-          echo "=== Git Commit ==="
-          git rev-parse HEAD
+      - name: Run Defconfig
+        run: |
+          make O=arm64-test ARCH=arm64 vendor/violet-perf_defconfig
 
-      - name: Check Kconfig Definition
+      - name: Check Generated Config
         run: |
           echo "=========================================="
-          echo " KCONFIG DEFINITION"
+          echo " GENERATED .CONFIG"
           echo "=========================================="
 
-          if grep -Rns \
-            --include='Kconfig' \
-            --include='Kconfig.*' \
-            "^[[:space:]]*config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch kernel drivers fs mm include 2>/dev/null; then
-
+          if grep -n "LD_DEAD_CODE_DATA_ELIMINATION" arm64-test/.config; then
             echo
-            echo "RESULT: DEFINED IN KCONFIG"
-
+            echo "[FOUND] LD_DEAD_CODE_DATA_ELIMINATION"
           else
-
             echo
-            echo "RESULT: NOT DEFINED IN KCONFIG"
-
+            echo "[NOT FOUND] LD_DEAD_CODE_DATA_ELIMINATION"
           fi
 
-      - name: Check ARM64 References
+      - name: Run Kconfig Conf
         run: |
           echo "=========================================="
-          echo " ARM64 REFERENCES"
+          echo " KCONFIG CONF"
           echo "=========================================="
 
-          grep -Rns \
-            "LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64 \
+          scripts/kconfig/conf \
+            --defconfig=vendor/violet-perf_defconfig \
+            Kconfig
+
+      - name: Final DCE Report
+        run: |
+          echo
+          echo "=========================================="
+          echo " FINAL DCE REPORT"
+          echo "=========================================="
+
+          echo
+          echo "Source defconfig:"
+          grep -n "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64/configs/vendor/violet-perf_defconfig \
+            || echo "  NOT PRESENT"
+
+          echo
+          echo "Generated .config:"
+          if grep -n "LD_DEAD_CODE_DATA_ELIMINATION" arm64-test/.config; then
+            echo
+            echo "RESULT: DCE symbol exists in .config"
+          else
+            echo "  NOT PRESENT"
+            echo
+            echo "RESULT: DCE symbol is absent from .config"
+          fi
+
+          echo
+          echo "Kconfig definition:"
+          grep -n -A3 -B1 \
+            "config LD_DEAD_CODE_DATA_ELIMINATION" \
             arch/Kconfig \
-            2>/dev/null || true
+            || echo "  NOT FOUND"
 
-      - name: Check All Kernel References
-        run: |
+          echo
           echo "=========================================="
-          echo " ALL REFERENCES"
+          echo " END"
           echo "=========================================="
-
-          grep -Rns \
-            "LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch kernel drivers fs mm include 2>/dev/null || true
-
-      - name: Check Defconfig
-        run: |
-          echo "=========================================="
-          echo " DEFCONFIG"
-          echo "=========================================="
-
-          grep -Rns \
-            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/configs \
-            2>/dev/null || true
