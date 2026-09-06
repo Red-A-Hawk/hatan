@@ -51,6 +51,22 @@ jobs:
             echo "[NOT FOUND] LD_DEAD_CODE_DATA_ELIMINATION"
           fi
 
+      - name: Build Kconfig Conf
+        run: |
+          echo "=========================================="
+          echo " BUILD KCONFIG CONF"
+          echo "=========================================="
+
+          make -C scripts/kconfig conf
+
+          echo
+          if [ -x scripts/kconfig/conf ]; then
+            echo "[OK] scripts/kconfig/conf exists"
+          else
+            echo "[FAIL] scripts/kconfig/conf was not built"
+            exit 1
+          fi
+
       - name: Run Kconfig Conf
         run: |
           echo "=========================================="
