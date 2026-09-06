@@ -1,4 +1,4 @@
-name: Check DCE Kconfig Result vv
+name: DCE Kconfig Diagnostic
 
 "on":
   workflow_dispatch:
@@ -30,12 +30,28 @@ jobs:
         run: |
           echo "=== Branch ==="
           git branch --show-current
+
           echo "=== Commit ==="
           git rev-parse --short HEAD
 
       - name: Run Defconfig
         run: |
+          echo "=========================================="
+          echo " RUN DEFCONFIG"
+          echo "=========================================="
+
           make O=arm64-test ARCH=arm64 vendor/violet-perf_defconfig
+
+      - name: Check Defconfig
+        run: |
+          echo "=========================================="
+          echo " SOURCE DEFCONFIG"
+          echo "=========================================="
+
+          grep -n \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64/configs/vendor/violet-perf_defconfig \
+            || echo "DCE: NOT FOUND"
 
       - name: Check Generated Config
         run: |
@@ -43,39 +59,75 @@ jobs:
           echo " GENERATED .CONFIG"
           echo "=========================================="
 
-          if grep -n "LD_DEAD_CODE_DATA_ELIMINATION" arm64-test/.config; then
+          if grep -n \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arm64-test/.config; then
             echo
-            echo "[FOUND] LD_DEAD_CODE_DATA_ELIMINATION"
+            echo "DCE in .config: FOUND"
           else
             echo
-            echo "[NOT FOUND] LD_DEAD_CODE_DATA_ELIMINATION"
+            echo "DCE in .config: ABSENT"
           fi
 
-      - name: Build Kconfig Conf
+      - name: Check Autoconf
         run: |
           echo "=========================================="
-          echo " BUILD KCONFIG CONF"
+          echo " AUTOCONF"
           echo "=========================================="
 
-          make -C scripts/kconfig conf
+          FOUND=0
 
-          echo
-          if [ -x scripts/kconfig/conf ]; then
-            echo "[OK] scripts/kconfig/conf exists"
+          for FILE in \
+            arm64-test/include/generated/autoconf.h \
+            arm64-test/include/config/auto.conf \
+            arm64-test/include/config/auto.conf.cmd
+          do
+            if [ -f "$FILE" ]; then
+              echo
+              echo "FILE: $FILE"
+
+              if grep -n \
+                "LD_DEAD_CODE_DATA_ELIMINATION" \
+                "$FILE"; then
+                FOUND=1
+              else
+                echo "DCE: NOT FOUND"
+              fi
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo
+            echo "DCE in generated config files: ABSENT"
+          fi
+
+      - name: Check Kconfig Definition
+        run: |
+          echo "=========================================="
+          echo " KCONFIG DEFINITION"
+          echo "=========================================="
+
+          grep -n -A8 -B2 \
+            "config LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/Kconfig \
+            || echo "DCE definition: NOT FOUND"
+
+      - name: Check Kconfig Selects
+        run: |
+          echo "=========================================="
+          echo " KCONFIG SELECTS"
+          echo "=========================================="
+
+          if grep -Rns \
+            "select LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch kernel drivers fs mm include \
+            2>/dev/null; then
+            echo
+            echo "DCE select: FOUND"
           else
-            echo "[FAIL] scripts/kconfig/conf was not built"
-            exit 1
+            echo
+            echo "DCE select: NONE"
           fi
-
-      - name: Run Kconfig Conf
-        run: |
-          echo "=========================================="
-          echo " KCONFIG CONF"
-          echo "=========================================="
-
-          scripts/kconfig/conf \
-            --defconfig=vendor/violet-perf_defconfig \
-            Kconfig
 
       - name: Final DCE Report
         run: |
@@ -84,31 +136,64 @@ jobs:
           echo " FINAL DCE REPORT"
           echo "=========================================="
 
-          echo
-          echo "Source defconfig:"
-          grep -n "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/arm64/configs/vendor/violet-perf_defconfig \
-            || echo "  NOT PRESENT"
+          DEFCONFIG="ABSENT"
+          CONFIG="ABSENT"
+          AUTOCONF="ABSENT"
+          SELECT="NONE"
 
-          echo
-          echo "Generated .config:"
-          if grep -n "LD_DEAD_CODE_DATA_ELIMINATION" arm64-test/.config; then
-            echo
-            echo "RESULT: DCE symbol exists in .config"
-          else
-            echo "  NOT PRESENT"
-            echo
-            echo "RESULT: DCE symbol is absent from .config"
+          if grep -q \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64/configs/vendor/violet-perf_defconfig; then
+            DEFCONFIG="PRESENT"
+          fi
+
+          if grep -q \
+            "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            arm64-test/.config; then
+            CONFIG="PRESENT"
+          fi
+
+          if grep -Rqs \
+            "LD_DEAD_CODE_DATA_ELIMINATION" \
+            arm64-test/include/generated \
+            arm64-test/include/config \
+            2>/dev/null; then
+            AUTOCONF="PRESENT"
+          fi
+
+          if grep -Rqs \
+            "select LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch kernel drivers fs mm include \
+            2>/dev/null; then
+            SELECT="FOUND"
           fi
 
           echo
-          echo "Kconfig definition:"
-          grep -n -A3 -B1 \
-            "config LD_DEAD_CODE_DATA_ELIMINATION" \
-            arch/Kconfig \
-            || echo "  NOT FOUND"
+          echo "DCE in defconfig : $DEFCONFIG"
+          echo "DCE in .config   : $CONFIG"
+          echo "DCE in generated : $AUTOCONF"
+          echo "DCE select       : $SELECT"
 
           echo
           echo "=========================================="
-          echo " END"
+
+          if [ "$DEFCONFIG" = "PRESENT" ] &&
+             [ "$CONFIG" = "ABSENT" ]; then
+
+            echo "CONCLUSION:"
+            echo "DCE is present in defconfig but absent after Kconfig processing."
+
+          elif [ "$DEFCONFIG" = "PRESENT" ] &&
+               [ "$CONFIG" = "PRESENT" ]; then
+
+            echo "CONCLUSION:"
+            echo "DCE is preserved in the generated configuration."
+
+          else
+
+            echo "CONCLUSION:"
+            echo "Further Kconfig investigation is required."
+
+          fi
+
           echo "=========================================="
