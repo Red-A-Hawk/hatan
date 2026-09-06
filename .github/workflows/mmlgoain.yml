@@ -288,11 +288,11 @@ jobs:
           echo
           echo ">>> Verify Polly=n"
 
-          if grep -q \
-              "^CONFIG_POLLY_CLANG=n$" \
+          if grep -qE \
+              "^(CONFIG_POLLY_CLANG=n|# CONFIG_POLLY_CLANG is not set)$" \
               arm64-test/.config; then
 
-            echo "[OK] CONFIG_POLLY_CLANG=n"
+            echo "[OK] Polly=n"
 
           else
 
@@ -304,11 +304,11 @@ jobs:
           echo
           echo ">>> Verify DCE=n"
 
-          if grep -q \
-              "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n$" \
+          if grep -qE \
+              "^(CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n|# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set)$" \
               arm64-test/.config; then
 
-            echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n"
+            echo "[OK] DCE=n"
 
           else
 
@@ -320,8 +320,8 @@ jobs:
           echo
           echo ">>> Verify LTO_CLANG=n"
 
-          if grep -q \
-              "^CONFIG_LTO_CLANG=n$" \
+          if grep -qE \
+              "^(CONFIG_LTO_CLANG=n|# CONFIG_LTO_CLANG is not set)$" \
               arm64-test/.config; then
 
             echo "[OK] LTO_CLANG=n"
@@ -336,8 +336,8 @@ jobs:
           echo
           echo ">>> Verify THINLTO=n"
 
-          if grep -q \
-              "^CONFIG_THINLTO=n$" \
+          if grep -qE \
+              "^(CONFIG_THINLTO=n|# CONFIG_THINLTO is not set)$" \
               arm64-test/.config; then
 
             echo "[OK] THINLTO=n"
@@ -444,38 +444,66 @@ jobs:
           echo
           echo ">>> Verify Polly=n"
 
-          grep -q \
-            "^CONFIG_POLLY_CLANG=n$" \
-            arm64-test/.config
+          if grep -qE \
+              "^(CONFIG_POLLY_CLANG=n|# CONFIG_POLLY_CLANG is not set)$" \
+              arm64-test/.config; then
 
-          echo "[OK] Polly=n"
+            echo "[OK] Polly=n"
+
+          else
+
+            echo "[FAIL] Polly is enabled"
+            exit 1
+
+          fi
 
           echo
           echo ">>> Verify DCE=n"
 
-          grep -q \
-            "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n$" \
-            arm64-test/.config
+          if grep -qE \
+              "^(CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=n|# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set)$" \
+              arm64-test/.config; then
 
-          echo "[OK] DCE=n"
+            echo "[OK] DCE=n"
+
+          else
+
+            echo "[FAIL] DCE is enabled"
+            exit 1
+
+          fi
 
           echo
           echo ">>> Verify LTO_CLANG=n"
 
-          grep -q \
-            "^CONFIG_LTO_CLANG=n$" \
-            arm64-test/.config
+          if grep -qE \
+              "^(CONFIG_LTO_CLANG=n|# CONFIG_LTO_CLANG is not set)$" \
+              arm64-test/.config; then
 
-          echo "[OK] LTO_CLANG=n"
+            echo "[OK] LTO_CLANG=n"
+
+          else
+
+            echo "[FAIL] LTO_CLANG is enabled"
+            exit 1
+
+          fi
 
           echo
           echo ">>> Verify THINLTO=n"
 
-          grep -q \
-            "^CONFIG_THINLTO=n$" \
-            arm64-test/.config
+          if grep -qE \
+              "^(CONFIG_THINLTO=n|# CONFIG_THINLTO is not set)$" \
+              arm64-test/.config; then
 
-          echo "[OK] THINLTO=n"
+            echo "[OK] THINLTO=n"
+
+          else
+
+            echo "[FAIL] THINLTO is enabled"
+            exit 1
+
+          fi
 
       # ============================================================
       # 12. PREPARE
