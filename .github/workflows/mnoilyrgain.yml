@@ -5,7 +5,7 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v3
 
 jobs:
   test-lto-polly-dce-mlgo:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest 
 
     steps:
 
