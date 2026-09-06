@@ -3,7 +3,7 @@ name: Test ARM64 Full LTO + DCE + Polly + MLGO v2
 "on":
   workflow_dispatch:
 
-jobs:
+ jobs:
   test-lto-polly-dce-mlgo:
     runs-on: ubuntu-22.04
 
