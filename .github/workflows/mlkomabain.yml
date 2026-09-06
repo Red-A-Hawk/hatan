@@ -1,0 +1,13 @@
+- name: Check DCE Kconfig References zz
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "DCE KCONFIG REFERENCES"
+          echo "============================================================"
+
+          grep -Rns \
+            "LD_DEAD_CODE_DATA_ELIMINATION" \
+            arch/arm64 \
+            arch/Kconfig \
+            || true
