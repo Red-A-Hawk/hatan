@@ -408,7 +408,7 @@ jobs:
                   grep -Ei \
                     "out of memory|oom-killer|killed process|sigterm|memory cgroup" \
                   | tail -n 20 || true
-              } >> resource-monitor.log
+              } | tee -a resource-monitor.log
               sleep 30
             done
           ) &
