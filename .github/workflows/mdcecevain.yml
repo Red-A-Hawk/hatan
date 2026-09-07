@@ -1,0 +1,136 @@
+name: Scan DCE References - xxx-17
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan-dce:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT xxx-17
+      # ============================================================
+      - name: Checkout Kernel
+        uses: actions/checkout@v4
+        with:
+          ref: xxx-17
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. SCAN DCE
+      # ============================================================
+      - name: Scan All DCE References
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "============================================================"
+          echo "DCE COMPLETE SOURCE SCAN"
+          echo "============================================================"
+          echo "Branch: xxx-17"
+          echo
+
+          echo "============================================================"
+          echo "1. CONFIG_LD_DEAD_CODE_DATA_ELIMINATION"
+          echo "============================================================"
+
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            'CONFIG_LD_DEAD_CODE_DATA_ELIMINATION' . \
+            || echo "[NOT FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "2. DEAD CODE REFERENCES"
+          echo "============================================================"
+
+          grep -RIniE \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            'dead[[:space:]_-]*code' . \
+            || echo "[NOT FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "3. LINKER GC-SECTIONS"
+          echo "============================================================"
+
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            -- '--gc-sections' . \
+            || echo "[NOT FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "4. FUNCTION SECTIONS"
+          echo "============================================================"
+
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            -- '-ffunction-sections' . \
+            || echo "[NOT FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "5. DATA SECTIONS"
+          echo "============================================================"
+
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            -- '-fdata-sections' . \
+            || echo "[NOT FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "6. POLLY DCE"
+          echo "============================================================"
+
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            'polly-run-dce' . \
+            || echo "[NOT FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "7. DCE-RELATED SOURCE FILES"
+          echo "============================================================"
+
+          grep -RIlE \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            --exclude='*.a' \
+            'CONFIG_LD_DEAD_CODE_DATA_ELIMINATION|dead[[:space:]_-]*code|--gc-sections|-ffunction-sections|-fdata-sections|polly-run-dce' . \
+            | sort \
+            || echo "[NO FILES FOUND]"
+
+          echo
+
+          echo "============================================================"
+          echo "SCAN COMPLETE"
+          echo "============================================================"
