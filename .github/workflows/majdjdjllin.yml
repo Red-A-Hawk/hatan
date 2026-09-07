@@ -530,10 +530,17 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
+            V=1 \
             vmlinux \
-            > lto-polly-mlgo-vmlinux-build.log 2>&1
+            2>&1 | tee lto-polly-mlgo-vmlinux-build.log | \
+            awk '
+              /^[[:space:]]*(CC|AR|LD)[[:space:]]/ {
+                print
+                fflush()
+              }
+            '
 
-          STATUS=$?
+          STATUS=${PIPESTATUS[0]}
 
           set -e
 
