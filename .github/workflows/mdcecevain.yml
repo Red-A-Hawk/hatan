@@ -1,158 +1,102 @@
-name: Scan DCE Patch Completeness - xxx-17
+name: Scan POLLY_DCE - xxx-17
 
 "on":
   workflow_dispatch:
 
 jobs:
-  scan-dce-patch-completeness:
+  scan-polly-dce:
     runs-on: ubuntu-latest
 
     steps:
 
-    # ============================================================
-    # 1. CHECKOUT
-    # ============================================================
     - name: Checkout Kernel
       uses: actions/checkout@v4
       with:
         ref: xxx-17
         fetch-depth: 1
 
-    # ============================================================
-    # 2. FULL PATCH COMPLETENESS SCAN
-    # ============================================================
-    - name: DCE Patch Completeness Scan
+    - name: POLLY_DCE Scan
       run: |
         set -uo pipefail
 
         echo "============================================================"
-        echo "DCE PATCH COMPLETENESS SCAN"
+        echo "POLLY_DCE SCAN"
         echo "============================================================"
-        echo "Branch: xxx-17"
 
         FAIL=0
 
-        # ------------------------------------------------------------
-        # 8. select LD_DEAD_CODE_DATA_ELIMINATION in arch/arm64/Kconfig
-        # ------------------------------------------------------------
         echo
-        echo "============================================================"
-        echo "8. arch/arm64/Kconfig - select LD_DEAD_CODE_DATA_ELIMINATION"
-        echo "============================================================"
+        echo "------------------------------------------------------------"
+        echo "1. Kconfig definition (arch/Kconfig)"
+        echo "------------------------------------------------------------"
 
-        if [ -f arch/arm64/Kconfig ]; then
-
-          if grep -n "select[[:space:]]\+LD_DEAD_CODE_DATA_ELIMINATION" arch/arm64/Kconfig; then
-            echo "[OK] select LD_DEAD_CODE_DATA_ELIMINATION found in arch/arm64/Kconfig"
-          else
-            echo "[MISSING] select LD_DEAD_CODE_DATA_ELIMINATION NOT found in arch/arm64/Kconfig"
-            echo "[MISSING] Without this, CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y has no effect"
-            echo "[MISSING] on arm64, since LD_DEAD_CODE_DATA_ELIMINATION is a promptless bool"
-            echo "[MISSING] in arch/Kconfig and must be selected by an architecture."
-            FAIL=1
-          fi
-
+        if grep -n -A5 "^config POLLY_DCE" arch/Kconfig; then
+          echo "[OK] POLLY_DCE defined in arch/Kconfig"
         else
-          echo "[ERROR] arch/arm64/Kconfig not found"
+          echo "[MISSING] POLLY_DCE not defined in arch/Kconfig"
           FAIL=1
         fi
 
-        # ------------------------------------------------------------
-        # 9. KEEP() protections in arch/arm64/kernel/vmlinux.lds.S
-        # ------------------------------------------------------------
         echo
-        echo "============================================================"
-        echo "9. arch/arm64/kernel/vmlinux.lds.S - KEEP() protections"
-        echo "============================================================"
+        echo "------------------------------------------------------------"
+        echo "2. Makefile condition (must be 'ifdef CONFIG_POLLY_DCE')"
+        echo "------------------------------------------------------------"
 
-        LDS=arch/arm64/kernel/vmlinux.lds.S
-
-        if [ ! -f "$LDS" ]; then
-          echo "[ERROR] $LDS not found"
-          FAIL=1
+        if grep -n "ifdef CONFIG_POLLY_DCE" Makefile; then
+          echo "[OK] Makefile guards polly-run-dce with CONFIG_POLLY_DCE"
         else
-
-          declare -A CHECKS=(
-            ["__kvm_ex_table"]='KEEP\(\*\(__kvm_ex_table\)\)'
-            [".hyp.idmap.text"]='KEEP\(\*\(\.hyp\.idmap\.text\)\)'
-            [".hyp.text"]='KEEP\(\*\(\.hyp\.text\)\)'
-            [".idmap.text"]='KEEP\(\*\(\.idmap\.text\)\)'
-            [".hibernate_exit.text"]='KEEP\(\*\(\.hibernate_exit\.text\)\)'
-            [".exception.text"]='KEEP\(\*\(\.exception\.text\)\)'
-            [".entry.tramp.text (pre-existing)"]='KEEP\(\*\(\.entry\.tramp\.text\)\)'
-            [".init.data.* merge"]='\*\(\.init\.data\.\*\)'
-            [".altinstr_replacement"]='KEEP\(\*\(\.altinstr_replacement\)\)'
-            [".mmuoff.data.write"]='KEEP\(\*\(\.mmuoff\.data\.write\)\)'
-            [".mmuoff.data.read"]='KEEP\(\*\(\.mmuoff\.data\.read\)\)'
-          )
-
-          for label in "${!CHECKS[@]}"; do
-            pattern="${CHECKS[$label]}"
-
-            if grep -nE "$pattern" "$LDS" > /tmp/match.txt; then
-              echo "[OK] $label"
-              sed 's/^/       /' /tmp/match.txt
-            else
-              echo "[MISSING] $label -- pattern not found: $pattern"
-              if [ "$label" != ".entry.tramp.text (pre-existing)" ]; then
-                FAIL=1
-              fi
-            fi
-            echo
-          done
-
-        fi
-
-        # ------------------------------------------------------------
-        # 10. --gc-sections (root Makefile, already confirmed present)
-        # ------------------------------------------------------------
-        echo "============================================================"
-        echo "10. Makefile - --gc-sections (sanity re-check)"
-        echo "============================================================"
-
-        if grep -n "gc-sections" Makefile; then
-          echo "[OK] --gc-sections found in root Makefile"
-        else
-          echo "[MISSING] --gc-sections NOT found in root Makefile"
+          echo "[MISSING] Makefile does NOT guard polly-run-dce with CONFIG_POLLY_DCE"
+          echo "[MISSING] (it may still be guarded by the old"
+          echo "[MISSING]  CONFIG_LD_DEAD_CODE_DATA_ELIMINATION condition)"
           FAIL=1
         fi
 
-        # ------------------------------------------------------------
-        # 11. Current defconfig state (informational only)
-        # ------------------------------------------------------------
         echo
-        echo "============================================================"
-        echo "11. Current defconfig state (informational)"
-        echo "============================================================"
+        echo "------------------------------------------------------------"
+        echo "3. Makefile - the actual flag line"
+        echo "------------------------------------------------------------"
 
-        grep -n "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+        if grep -n -- "-mllvm -polly-run-dce" Makefile; then
+          echo "[OK] -mllvm -polly-run-dce present in Makefile"
+        else
+          echo "[MISSING] -mllvm -polly-run-dce NOT found in Makefile"
+          FAIL=1
+        fi
+
+        echo
+        echo "------------------------------------------------------------"
+        echo "4. Makefile - greedy fusion must be fully removed"
+        echo "------------------------------------------------------------"
+
+        if grep -n "polly-loopfusion-greedy" Makefile; then
+          echo "[WARN] 'polly-loopfusion-greedy' still referenced in Makefile"
+          echo "[WARN] (expected: fully removed, only -polly-opt-fusion=max used)"
+        else
+          echo "[OK] No reference to polly-loopfusion-greedy in Makefile"
+        fi
+
+        echo
+        echo "------------------------------------------------------------"
+        echo "5. Current defconfig state (informational)"
+        echo "------------------------------------------------------------"
+
+        grep -n "CONFIG_POLLY_CLANG" \
           arch/arm64/configs/vendor/violet-perf_defconfig || \
-          echo "[INFO] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION not present in defconfig"
+          echo "[INFO] CONFIG_POLLY_CLANG not present in defconfig"
 
         grep -n "CONFIG_POLLY_DCE" \
           arch/arm64/configs/vendor/violet-perf_defconfig || \
           echo "[INFO] CONFIG_POLLY_DCE not present in defconfig"
 
-        # ------------------------------------------------------------
-        # FINAL VERDICT
-        # ------------------------------------------------------------
         echo
         echo "============================================================"
-        echo "FINAL VERDICT"
+        echo "VERDICT"
         echo "============================================================"
 
         if [ "$FAIL" -eq 0 ]; then
-          echo "[OK] All required DCE-safety patch pieces are present."
-          echo "[OK] Enabling CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y should be"
-          echo "[OK] safe with respect to the checks this scan performs."
+          echo "[OK] POLLY_DCE wiring looks complete and self-contained."
         else
-          echo "[FAIL] One or more required patch pieces are MISSING."
-          echo "[FAIL] Do NOT enable CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
-          echo "[FAIL] until the missing items above are applied."
+          echo "[FAIL] POLLY_DCE wiring is incomplete -- see MISSING items above."
         fi
-
-        echo "============================================================"
-        echo "SCAN COMPLETE"
-        echo "============================================================"
 
         exit "$FAIL"
