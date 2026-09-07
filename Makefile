@@ -959,9 +959,7 @@ KBUILD_CFLAGS	+= -mllvm -polly \
 # but failed to boot and stopped at the boot logo on the target device.
 # The max fusion mode produced a working bootable kernel.
 # Keep max as the preferred and stable fusion strategy.
-# POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-loopfusion-greedy)
-
-POLLY_FUSION_FLAG := -mllvm -polly-opt-fusion=max
+POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-opt-fusion=max)
 $(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag))
 KBUILD_CFLAGS	+= $(POLLY_FUSION_FLAG)
 
