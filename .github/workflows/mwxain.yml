@@ -1,549 +1,596 @@
-name: Compare With Manipvlator Upstream
+name: Compare With Manipvlator
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  compare:
+  compare-manipvlator:
     runs-on: ubuntu-22.04
+    continue-on-error: true
 
     steps:
 
       # ============================================================
-      # 1. CHECKOUT RED-A-HAWK
+      # 1. CHECKOUT TARGET KERNEL
       # ============================================================
-      - name: Checkout Red-A-Hawk branch 16
+      - name: Checkout Kernel Branch 16
         uses: actions/checkout@v4
+        continue-on-error: true
         with:
           ref: 16
           fetch-depth: 0
-          persist-credentials: false
 
       # ============================================================
-      # 2. FETCH MANIPVLATOR
+      # 2. CONFIGURATION
       # ============================================================
-      - name: Fetch manipvlator stable
+      - name: Configure Comparison
+        continue-on-error: true
+        run: |
+          set +e
+
+          MANIP_REPO="https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git"
+
+          START_COMMIT="a6d46b186e893765fdd97bf1369626a26e225d5d"
+
+          echo "MANIP_REPO=$MANIP_REPO" >> "$GITHUB_ENV"
+          echo "START_COMMIT=$START_COMMIT" >> "$GITHUB_ENV"
+
+          echo "============================================================"
+          echo " MANIPVLATOR KERNEL COMPARISON"
+          echo "============================================================"
+          echo "Target repository : Red-A-Hawk/los_kernel_xiaomi_sm6150"
+          echo "Target branch     : 16"
+          echo "Start commit      : $START_COMMIT"
+          echo "Direction         : OLDEST -> NEWEST"
+          echo "============================================================"
+
+      # ============================================================
+      # 3. FETCH MANIPVLATOR
+      # ============================================================
+      - name: Fetch Manipvlator
         continue-on-error: true
         run: |
           set +e
 
           git remote remove manipvlator 2>/dev/null || true
 
-          git remote add manipvlator \
-            https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
+          git remote add manipvlator "$MANIP_REPO"
 
-          git fetch \
-            --no-tags \
-            --prune \
-            manipvlator \
-            stable
+          git fetch --no-tags manipvlator
 
-          exit 0
+          FETCH_RC=$?
+
+          echo "Fetch exit code: $FETCH_RC"
+
+          if [ "$FETCH_RC" -ne 0 ]; then
+            echo "ERROR: Failed to fetch Manipvlator."
+            exit 0
+          fi
+
+          echo
+          echo "============================================================"
+          echo " START COMMIT"
+          echo "============================================================"
+
+          git show -s \
+            --format='%H%n%ad%n%an%n%s' \
+            --date=iso-strict \
+            "$START_COMMIT"
 
       # ============================================================
-      # 3. ANALYSIS
+      # 4. DETECT MANIPVLATOR HEAD
       # ============================================================
-      - name: Analyze missing commits
+      - name: Detect Manipvlator HEAD
         continue-on-error: true
-        shell: bash
         run: |
           set +e
 
-          OUT="$GITHUB_WORKSPACE/manipvlator-analysis"
-          PATCH_DIR="$OUT/missing-patches"
+          MANIP_BRANCH="$(
+            git remote show manipvlator 2>/dev/null |
+            sed -n '/HEAD branch/s/.*: //p'
+          )"
 
-          rm -rf "$OUT"
-          mkdir -p "$PATCH_DIR"
+          if [ -z "$MANIP_BRANCH" ]; then
+            MANIP_BRANCH="stable"
+          fi
 
-          REPORT="$OUT/report.md"
-          MISSING="$OUT/missing.txt"
-          PRESENT="$OUT/already-present.txt"
-          SKIPPED="$OUT/skipped.txt"
-          ERRORS="$OUT/errors.txt"
+          MANIP_REF="refs/remotes/manipvlator/$MANIP_BRANCH"
 
-          TARGET="HEAD"
+          if ! git rev-parse "$MANIP_REF" >/dev/null 2>&1; then
+            echo "Detected branch could not be resolved."
+            echo "Trying stable..."
 
-          MANIP_REF="manipvlator/stable"
+            MANIP_BRANCH="stable"
+            MANIP_REF="refs/remotes/manipvlator/stable"
+          fi
 
-          STOP_COMMIT="a6d46b186e893765fdd97bf1369626a26e225d5d"
+          if ! git rev-parse "$MANIP_REF" >/dev/null 2>&1; then
+            echo "ERROR: Manipvlator reference not found."
+            exit 0
+          fi
 
-          # ========================================================
-          # INITIAL FILES
-          # ========================================================
+          MANIP_HEAD="$(git rev-parse "$MANIP_REF")"
+
+          echo "MANIP_BRANCH=$MANIP_BRANCH" >> "$GITHUB_ENV"
+          echo "MANIP_REF=$MANIP_REF" >> "$GITHUB_ENV"
+          echo "MANIP_HEAD=$MANIP_HEAD" >> "$GITHUB_ENV"
+
+          echo
+          echo "============================================================"
+          echo " MANIPVLATOR HEAD"
+          echo "============================================================"
+
+          git show -s \
+            --format='%H%n%ad%n%an%n%s' \
+            --date=iso-strict \
+            "$MANIP_HEAD"
+
+      # ============================================================
+      # 5. VERIFY RANGE
+      # ============================================================
+      - name: Verify Comparison Range
+        continue-on-error: true
+        run: |
+          set +e
+
+          if ! git merge-base --is-ancestor \
+            "$START_COMMIT" \
+            "$MANIP_HEAD"; then
+
+            echo "ERROR:"
+            echo "$START_COMMIT is not an ancestor of $MANIP_HEAD"
+
+            exit 0
+          fi
+
+          echo
+          echo "============================================================"
+          echo " RANGE VERIFIED"
+          echo "============================================================"
+          echo "START:"
+          echo "$START_COMMIT"
+          echo
+          echo "END:"
+          echo "$MANIP_HEAD"
+          echo
+          echo "Everything before START_COMMIT will be ignored."
+          echo "START_COMMIT itself WILL be analyzed."
+
+      # ============================================================
+      # 6. PREPARE DIRECTORIES
+      # ============================================================
+      - name: Prepare Analysis Directories
+        continue-on-error: true
+        run: |
+          set +e
+
+          rm -rf manipvlator-analysis
+
+          mkdir -p \
+            manipvlator-analysis/missing-patches \
+            manipvlator-analysis/logs \
+            manipvlator-analysis/patch-id
+
+          touch manipvlator-analysis/missing.txt
+          touch manipvlator-analysis/already-present.txt
+          touch manipvlator-analysis/errors.txt
+          touch manipvlator-analysis/skipped.txt
+
+      # ============================================================
+      # 7. COLLECT COMMITS
+      #
+      # START COMMIT IS INCLUDED.
+      #
+      # ORDER:
+      # OLDEST -> NEWEST
+      # ============================================================
+      - name: Collect Manipvlator Commits
+        continue-on-error: true
+        run: |
+          set +e
+
+          COMMITS_FILE="manipvlator-analysis/manipvlator-commits.txt"
+
+          # First commit = START_COMMIT
+          echo "$START_COMMIT" > "$COMMITS_FILE"
+
+          # Then every commit AFTER START_COMMIT
+          git rev-list \
+            --reverse \
+            "$START_COMMIT..$MANIP_HEAD" \
+            >> "$COMMITS_FILE"
+
+          TOTAL="$(wc -l < "$COMMITS_FILE")"
+
+          echo "MANIP_COMMIT_COUNT=$TOTAL" >> "$GITHUB_ENV"
+
+          echo
+          echo "============================================================"
+          echo " COMMITS TO ANALYZE"
+          echo "============================================================"
+          echo "Total commits: $TOTAL"
+          echo "Order: OLDEST -> NEWEST"
+          echo
+
+          nl -ba "$COMMITS_FILE"
+
+      # ============================================================
+      # 8. BUILD TARGET PATCH-ID DATABASE
+      #
+      # Detects equivalent patches even when SHA differs.
+      # ============================================================
+      - name: Build Target Patch-ID Database
+        continue-on-error: true
+        run: |
+          set +e
+
+          TARGET_PATCH_IDS="manipvlator-analysis/patch-id/target.patchids"
+
+          : > "$TARGET_PATCH_IDS"
+
+          echo "Building patch-id database from target branch..."
+
+          git log \
+            --all \
+            --format='%H' |
+          while IFS= read -r SHA; do
+
+            [ -z "$SHA" ] && continue
+
+            PATCH_ID="$(
+              git show \
+                --format= \
+                "$SHA" 2>/dev/null |
+              git patch-id --stable 2>/dev/null |
+              awk '{print $1}'
+            )"
+
+            if [ -n "$PATCH_ID" ]; then
+              echo "$PATCH_ID $SHA" >> "$TARGET_PATCH_IDS"
+            fi
+
+          done
+
+          sort -u \
+            "$TARGET_PATCH_IDS" \
+            -o "$TARGET_PATCH_IDS"
+
+          TARGET_PATCH_COUNT="$(
+            wc -l < "$TARGET_PATCH_IDS"
+          )"
+
+          echo "TARGET_PATCH_ID_COUNT=$TARGET_PATCH_COUNT" >> "$GITHUB_ENV"
+
+          echo
+          echo "Target patch IDs: $TARGET_PATCH_COUNT"
+
+      # ============================================================
+      # 9. ANALYZE EACH COMMIT
+      # ============================================================
+      - name: Analyze Manipvlator Commits
+        continue-on-error: true
+        run: |
+          set +e
+
+          COMMITS_FILE="manipvlator-analysis/manipvlator-commits.txt"
+          TARGET_PATCH_IDS="manipvlator-analysis/patch-id/target.patchids"
+          REPORT="manipvlator-analysis/report.md"
 
           cat > "$REPORT" <<EOF
-          # Red-A-Hawk vs manipvlator Analysis
+          # Manipvlator Kernel Comparison
 
           ## Target
 
-          - Repository: Red-A-Hawk/los_kernel_xiaomi_sm6150
-          - Branch: 16
+          Repository:
+
+          Red-A-Hawk/los_kernel_xiaomi_sm6150
+
+          Branch:
+
+          16
 
           ## Reference
 
-          - Repository: manipvlator/los_kernel_xiaomi_sm6150
-          - Branch: stable
+          Repository:
 
-          ## Stop Commit
+          manipvlator/los_kernel_xiaomi_sm6150
 
-          \`$STOP_COMMIT\`
+          Branch:
 
-          Analysis is limited to the manipvlator history
-          ending at this exact commit.
+          $MANIP_BRANCH
 
-          ## Rules
+          HEAD:
 
-          - Read-only analysis.
-          - No cherry-pick.
-          - No commit.
-          - No push.
-          - No reset.
-          - No modification of branch 16.
-          - Missing commits are exported individually.
-          - Patch order: OLDEST -> NEWEST.
+          $MANIP_HEAD
+
+          ## Range
+
+          Start:
+
+          $START_COMMIT
+
+          End:
+
+          $MANIP_HEAD
+
+          The START commit itself is included.
+
+          Everything before START_COMMIT is ignored.
+
+          Analysis order:
+
+          OLDEST -> NEWEST
+
+          ## Safety
+
+          No cherry-pick.
+
+          No commit.
+
+          No push.
+
+          No reset.
+
+          No source modification.
 
           EOF
 
-          cat > "$MISSING" <<'EOF'
-          # Missing commits from manipvlator
-          #
-          # NUMBER | SHA | DATE | APPLY | PATH | SUBJECT
+          INDEX=0
 
-          EOF
+          while IFS= read -r SHA; do
 
-          cat > "$PRESENT" <<'EOF'
-          # Already present / equivalent commits
+            [ -z "$SHA" ] && continue
 
-          EOF
+            INDEX=$((INDEX + 1))
 
-          cat > "$SKIPPED" <<'EOF'
-          # Skipped commits
-
-          EOF
-
-          cat > "$ERRORS" <<'EOF'
-          # Non-fatal errors
-
-          EOF
-
-          # ========================================================
-          # VERIFY MANIPVLATOR
-          # ========================================================
-
-          if ! git rev-parse "$MANIP_REF" >/dev/null 2>&1; then
-
-            echo \
-              "ERROR: manipvlator/stable unavailable." \
-              >> "$ERRORS"
-
-            cat >> "$REPORT" <<'EOF'
-
-          ## ERROR
-
-          `manipvlator/stable` could not be fetched.
-
-          No commits were guessed.
-          EOF
-
-            exit 0
-          fi
-
-          # ========================================================
-          # VERIFY EXACT STOP COMMIT
-          # ========================================================
-
-          if ! git cat-file -e "$STOP_COMMIT^{commit}" \
-            >/dev/null 2>&1; then
-
-            echo \
-              "ERROR: Stop commit does not exist." \
-              >> "$ERRORS"
-
-            cat >> "$REPORT" <<EOF
-
-          ## ERROR
-
-          The requested stop commit was not found:
-
-          \`$STOP_COMMIT\`
-
-          Analysis was stopped without guessing another commit.
-          EOF
-
-            exit 0
-          fi
-
-          # ========================================================
-          # CHECK THAT STOP COMMIT BELONGS TO MANIPVLATOR HISTORY
-          # ========================================================
-
-          if ! git merge-base \
-              --is-ancestor \
-              "$STOP_COMMIT" \
-              "$MANIP_REF" \
-              >/dev/null 2>&1; then
-
-            echo \
-              "ERROR: Stop commit is not an ancestor of manipvlator/stable." \
-              >> "$ERRORS"
-
-            cat >> "$REPORT" <<EOF
-
-          ## ERROR
-
-          The requested stop commit:
-
-          \`$STOP_COMMIT\`
-
-          is not an ancestor of:
-
-          \`$MANIP_REF\`
-
-          The workflow will not substitute another commit.
-          EOF
-
-            exit 0
-          fi
-
-          # ========================================================
-          # COMMON ANCESTOR
-          # ========================================================
-
-          MERGE_BASE="$(
-            git merge-base \
-              "$TARGET" \
-              "$STOP_COMMIT" \
-              2>/dev/null \
-              || true
-          )"
-
-          if [ -z "$MERGE_BASE" ]; then
-
-            echo \
-              "ERROR: No common ancestor." \
-              >> "$ERRORS"
-
-            cat >> "$REPORT" <<'EOF'
-
-          ## ERROR
-
-          No common ancestor could be found between branch 16
-          and the requested manipvlator commit.
-
-          No commits were guessed.
-          EOF
-
-            exit 0
-          fi
-
-          # ========================================================
-          # SHOW BASE
-          # ========================================================
-
-          BASE_SUBJECT="$(
-            git show \
-              -s \
-              --format='%s' \
-              "$MERGE_BASE" \
-              2>/dev/null \
-              || echo "UNKNOWN"
-          )"
-
-          BASE_DATE="$(
-            git show \
-              -s \
-              --format='%ad' \
-              --date=iso-strict \
-              "$MERGE_BASE" \
-              2>/dev/null \
-              || echo "UNKNOWN"
-          )"
-
-          echo "Common ancestor:"
-          echo "$MERGE_BASE"
-
-          # ========================================================
-          # GET COMMITS BETWEEN COMMON BASE AND STOP COMMIT
-          #
-          # IMPORTANT:
-          #
-          # --reverse = OLDEST -> NEWEST
-          #
-          # --no-merges avoids trying to export merge commits as
-          # normal single-parent patches.
-          # ========================================================
-
-          mapfile -t MANIP_COMMITS < <(
-
-            git rev-list \
-              --reverse \
-              --no-merges \
-              "${MERGE_BASE}..${STOP_COMMIT}" \
-              2>/dev/null \
-              || true
-
-          )
-
-          TOTAL="${#MANIP_COMMITS[@]}"
-
-          echo "Commits in comparison range: $TOTAL"
-
-          # ========================================================
-          # BUILD PATCH-EQUIVALENCE MAP
-          #
-          # git cherry detects equivalent patches even if SHA differs.
-          #
-          # TARGET = Red-A-Hawk
-          # HEAD   = manipvlator stop commit
-          #
-          # '-' means equivalent change already exists in target.
-          # '+' means unique to manipvlator.
-          # ========================================================
-
-          declare -A PRESENT_MAP
-
-          while IFS= read -r LINE; do
-
-            [ -z "$LINE" ] && continue
-
-            STATUS="${LINE:0:1}"
-            REST="${LINE:2}"
-
-            SHA="${REST%% *}"
-
-            if [ "$STATUS" = "-" ] &&
-               [ -n "$SHA" ]; then
-
-              PRESENT_MAP["$SHA"]=1
-
-            fi
-
-          done < <(
-
-            git cherry \
-              -v \
-              "$TARGET" \
-              "$STOP_COMMIT" \
-              2>/dev/null \
-              || true
-
-          )
-
-          # ========================================================
-          # COUNTERS
-          # ========================================================
-
-          ANALYZED=0
-          MISSING_COUNT=0
-          PRESENT_COUNT=0
-          SKIPPED_COUNT=0
-          CLEAN_COUNT=0
-          CONFLICT_COUNT=0
-          ERROR_COUNT=0
-
-          PATCH_NUMBER=0
-
-          # ========================================================
-          # PROCESS COMMITS
-          # ========================================================
-
-          for SHA in "${MANIP_COMMITS[@]}"; do
-
-            ANALYZED=$((ANALYZED + 1))
-
-            # ------------------------------------------------------
-            # INFORMATION
-            # ------------------------------------------------------
+            echo
+            echo "============================================================"
+            echo " COMMIT $INDEX / $MANIP_COMMIT_COUNT"
+            echo "============================================================"
+            echo "SHA: $SHA"
 
             SUBJECT="$(
-              git show \
-                -s \
+              git show -s \
                 --format='%s' \
-                "$SHA" \
-                2>/dev/null \
-                || echo "UNKNOWN SUBJECT"
+                "$SHA" 2>/dev/null
             )"
 
             DATE="$(
-              git show \
-                -s \
+              git show -s \
                 --format='%ad' \
                 --date=iso-strict \
-                "$SHA" \
-                2>/dev/null \
-                || echo "UNKNOWN DATE"
+                "$SHA" 2>/dev/null
             )"
 
             AUTHOR="$(
-              git show \
-                -s \
+              git show -s \
                 --format='%an <%ae>' \
-                "$SHA" \
-                2>/dev/null \
-                || echo "UNKNOWN AUTHOR"
+                "$SHA" 2>/dev/null
             )"
 
+            PARENTS="$(
+              git show -s \
+                --format='%P' \
+                "$SHA" 2>/dev/null
+            )"
+
+            PARENT_COUNT="$(
+              echo "$PARENTS" | wc -w
+            )"
+
+            echo "Subject : $SUBJECT"
+            echo "Date    : $DATE"
+            echo "Author  : $AUTHOR"
+            echo "Parents : $PARENT_COUNT"
+
             # ------------------------------------------------------
-            # ALREADY PRESENT / EQUIVALENT
+            # PATCH-ID
             # ------------------------------------------------------
+            PATCH_ID="$(
+              git show \
+                --format= \
+                "$SHA" 2>/dev/null |
+              git patch-id --stable 2>/dev/null |
+              awk '{print $1}'
+            )"
 
-            if [ "${PRESENT_MAP[$SHA]:-0}" = "1" ]; then
+            echo "Patch ID: $PATCH_ID"
 
-              echo \
-                "$SHA | $DATE | ALREADY PRESENT | $SUBJECT" \
-                >> "$PRESENT"
+            # ------------------------------------------------------
+            # PATCH-ID UNAVAILABLE
+            # ------------------------------------------------------
+            if [ -z "$PATCH_ID" ]; then
 
-              PRESENT_COUNT=$((PRESENT_COUNT + 1))
+              echo "STATUS: PATCH-ID UNAVAILABLE"
+
+              printf '%s | %s | patch-id unavailable | %s\n' \
+                "$SHA" \
+                "$DATE" \
+                "$SUBJECT" \
+                >> manipvlator-analysis/errors.txt
 
               continue
             fi
 
             # ------------------------------------------------------
-            # FILES
+            # CHECK AGAINST TARGET
             # ------------------------------------------------------
+            MATCH_SHA="$(
+              awk \
+                -v id="$PATCH_ID" \
+                '$1 == id {print $2; exit}' \
+                "$TARGET_PATCH_IDS"
+            )"
 
-            FILES="$(
-              git diff-tree \
-                --no-commit-id \
-                --name-only \
-                -r \
+            if [ -n "$MATCH_SHA" ]; then
+
+              echo "STATUS: ALREADY PRESENT / EQUIVALENT"
+              echo "Target equivalent SHA: $MATCH_SHA"
+
+              printf '%s | %s | %s | equivalent=%s\n' \
                 "$SHA" \
-                2>/dev/null \
-                || true
+                "$DATE" \
+                "$SUBJECT" \
+                "$MATCH_SHA" \
+                >> manipvlator-analysis/already-present.txt
+
+              continue
+            fi
+
+            # ------------------------------------------------------
+            # MISSING COMMIT
+            # ------------------------------------------------------
+            INDEX_PADDED="$(
+              printf "%04d" "$INDEX"
             )"
-
-            FILE_COUNT="$(
-              printf '%s\n' "$FILES" |
-              sed '/^$/d' |
-              wc -l |
-              tr -d ' '
-            )"
-
-            # ------------------------------------------------------
-            # SUBSYSTEM
-            # ------------------------------------------------------
-
-            SUBSYSTEM="OTHER"
-
-            while IFS= read -r FILE; do
-
-              case "$FILE" in
-
-                arch/*)
-                  SUBSYSTEM="ARCH"
-                  break
-                  ;;
-
-                drivers/*)
-                  SUBSYSTEM="DRIVERS"
-                  break
-                  ;;
-
-                fs/*)
-                  SUBSYSTEM="FS"
-                  break
-                  ;;
-
-                mm/*)
-                  SUBSYSTEM="MM"
-                  break
-                  ;;
-
-                kernel/*)
-                  SUBSYSTEM="KERNEL"
-                  break
-                  ;;
-
-                net/*)
-                  SUBSYSTEM="NET"
-                  break
-                  ;;
-
-                security/*)
-                  SUBSYSTEM="SECURITY"
-                  break
-                  ;;
-
-                block/*)
-                  SUBSYSTEM="BLOCK"
-                  break
-                  ;;
-
-                ipc/*)
-                  SUBSYSTEM="IPC"
-                  break
-                  ;;
-
-                lib/*)
-                  SUBSYSTEM="LIB"
-                  break
-                  ;;
-
-                include/*)
-                  SUBSYSTEM="INCLUDE"
-                  break
-                  ;;
-
-                scripts/*)
-                  SUBSYSTEM="SCRIPTS"
-                  break
-                  ;;
-
-              esac
-
-            done <<< "$FILES"
-
-            # ------------------------------------------------------
-            # NUMBER
-            # ------------------------------------------------------
-
-            PATCH_NUMBER=$((PATCH_NUMBER + 1))
-
-            NUM="$(
-              printf '%04d' "$PATCH_NUMBER"
-            )"
-
-            # ------------------------------------------------------
-            # SAFE SUBJECT
-            # ------------------------------------------------------
 
             SAFE_SUBJECT="$(
               echo "$SUBJECT" |
               tr '[:upper:]' '[:lower:]' |
-              sed \
-                -e 's/[^a-z0-9._-]/-/g' \
-                -e 's/-\+/-/g' \
-                -e 's/^-//' \
-                -e 's/-$//' |
+              sed 's/[^a-z0-9._-]/-/g' |
+              sed 's/-\+/-/g' |
+              sed 's/^-//;s/-$//' |
               cut -c1-100
             )"
 
             if [ -z "$SAFE_SUBJECT" ]; then
-              SAFE_SUBJECT="unknown-commit"
+              SAFE_SUBJECT="manipvlator-commit"
             fi
 
-            PATCH_FILE="$PATCH_DIR/${NUM}-${SAFE_SUBJECT}.patch"
+            PATCH_FILE="manipvlator-analysis/missing-patches/${INDEX_PADDED}-${SAFE_SUBJECT}.patch"
+
+            echo "STATUS: MISSING"
+            echo "Patch: $PATCH_FILE"
 
             # ------------------------------------------------------
-            # EXPORT PATCH
+            # CHANGED FILES
             # ------------------------------------------------------
+            FILES="$(
+              git diff-tree \
+                --no-commit-id \
+                --name-status \
+                -r \
+                "$SHA" 2>/dev/null
+            )"
 
-            if ! git format-patch \
+            # ------------------------------------------------------
+            # SUBSYSTEM CLASSIFICATION
+            # ------------------------------------------------------
+            SUBSYSTEM="OTHER"
+
+            if echo "$FILES" | grep -q 'arch/'; then
+              SUBSYSTEM="ARCH"
+
+            elif echo "$FILES" | grep -q 'drivers/'; then
+              SUBSYSTEM="DRIVERS"
+
+            elif echo "$FILES" | grep -q 'fs/'; then
+              SUBSYSTEM="FILESYSTEM"
+
+            elif echo "$FILES" | grep -q 'mm/'; then
+              SUBSYSTEM="MM"
+
+            elif echo "$FILES" | grep -q 'net/'; then
+              SUBSYSTEM="NETWORK"
+
+            elif echo "$FILES" | grep -q 'kernel/'; then
+              SUBSYSTEM="KERNEL"
+
+            elif echo "$FILES" | grep -q 'include/'; then
+              SUBSYSTEM="INCLUDE"
+
+            elif echo "$FILES" | grep -q 'security/'; then
+              SUBSYSTEM="SECURITY"
+
+            elif echo "$FILES" | grep -q 'crypto/'; then
+              SUBSYSTEM="CRYPTO"
+
+            elif echo "$FILES" | grep -q 'block/'; then
+              SUBSYSTEM="BLOCK"
+
+            elif echo "$FILES" | grep -q 'ipc/'; then
+              SUBSYSTEM="IPC"
+
+            elif echo "$FILES" | grep -q 'scripts/'; then
+              SUBSYSTEM="SCRIPTS"
+            fi
+
+            # ------------------------------------------------------
+            # GENERATE PATCH
+            #
+            # NORMAL COMMIT:
+            # git format-patch
+            #
+            # MERGE COMMIT:
+            # diff against FIRST PARENT
+            # ------------------------------------------------------
+            if [ "$PARENT_COUNT" -gt 1 ]; then
+
+              FIRST_PARENT="$(
+                echo "$PARENTS" | awk '{print $1}'
+              )"
+
+              git diff \
+                --binary \
+                --full-index \
+                "$FIRST_PARENT" \
+                "$SHA" \
+                > "$PATCH_FILE"
+
+              DIFF_RC=$?
+
+              if [ "$DIFF_RC" -eq 0 ]; then
+
+                PATCH_HEADER="$(
+                  git show \
+                    --format=email \
+                    --no-patch \
+                    "$SHA" 2>/dev/null
+                )"
+
+                if [ -n "$PATCH_HEADER" ]; then
+
+                  {
+                    echo "$PATCH_HEADER"
+                    echo
+                    cat "$PATCH_FILE"
+                  } > "${PATCH_FILE}.tmp"
+
+                  mv \
+                    "${PATCH_FILE}.tmp" \
+                    "$PATCH_FILE"
+
+                fi
+
+              fi
+
+              FORMAT_RC=$DIFF_RC
+
+            else
+
+              git format-patch \
                 --stdout \
                 --full-index \
                 --binary \
                 -1 "$SHA" \
-                > "$PATCH_FILE" \
-                2>/dev/null; then
+                > "$PATCH_FILE"
 
-              echo \
-                "$SHA | PATCH_GENERATION_FAILED | $SUBJECT" \
-                >> "$ERRORS"
+              FORMAT_RC=$?
 
-              ERROR_COUNT=$((ERROR_COUNT + 1))
+            fi
+
+            # ------------------------------------------------------
+            # PATCH GENERATION ERROR
+            # ------------------------------------------------------
+            if [ "$FORMAT_RC" -ne 0 ]; then
+
+              echo "ERROR: patch generation failed."
+
+              printf '%s | %s | patch generation failed | %s\n' \
+                "$SHA" \
+                "$DATE" \
+                "$SUBJECT" \
+                >> manipvlator-analysis/errors.txt
 
               rm -f "$PATCH_FILE"
 
@@ -553,234 +600,306 @@ jobs:
             # ------------------------------------------------------
             # APPLY CHECK
             #
-            # ONLY CHECK.
-            # SOURCE IS NEVER MODIFIED.
+            # IMPORTANT:
+            # This does NOT apply the patch.
             # ------------------------------------------------------
+            APPLY_LOG="manipvlator-analysis/logs/${INDEX_PADDED}-apply.log"
 
-            if git apply \
-                --check \
-                --whitespace=nowarn \
-                "$PATCH_FILE" \
-                >/dev/null \
-                2>&1; then
+            git apply \
+              --check \
+              "$PATCH_FILE" \
+              > "$APPLY_LOG" \
+              2>&1
 
+            APPLY_RC=$?
+
+            if [ "$APPLY_RC" -eq 0 ]; then
               APPLY_STATUS="CLEAN_APPLY"
-
-              CLEAN_COUNT=$((CLEAN_COUNT + 1))
-
             else
-
               APPLY_STATUS="CONFLICT"
-
-              CONFLICT_COUNT=$((CONFLICT_COUNT + 1))
-
             fi
 
             # ------------------------------------------------------
-            # PATH CHECK
+            # RECORD MISSING COMMIT
             # ------------------------------------------------------
+            printf '%s | %s | %s | %s | %s | %s\n' \
+              "$SHA" \
+              "$DATE" \
+              "$SUBSYSTEM" \
+              "$APPLY_STATUS" \
+              "$PATCH_ID" \
+              "$SUBJECT" \
+              >> manipvlator-analysis/missing.txt
 
-            MISSING_FILES=""
+            # ------------------------------------------------------
+            # DETAILED REPORT
+            # ------------------------------------------------------
+            cat >> "$REPORT" <<EOF
 
-            while IFS= read -r FILE; do
+          ---
 
-              [ -z "$FILE" ] && continue
+          ## $INDEX_PADDED — $SHA
 
-              if [ ! -e "$FILE" ]; then
+          **Subject**
 
-                MISSING_FILES="${MISSING_FILES}${FILE}"$'\n'
+          $SUBJECT
 
-              fi
+          **Date**
 
-            done <<< "$FILES"
+          $DATE
 
-            if [ -n "$MISSING_FILES" ]; then
-              PATH_STATUS="PATH_MISSING"
-            else
-              PATH_STATUS="PATH_OK"
+          **Author**
+
+          $AUTHOR
+
+          **Parent count**
+
+          $PARENT_COUNT
+
+          **Patch ID**
+
+          $PATCH_ID
+
+          **Subsystem**
+
+          $SUBSYSTEM
+
+          **Apply check**
+
+          $APPLY_STATUS
+
+          **Patch**
+
+          \`missing-patches/${INDEX_PADDED}-${SAFE_SUBJECT}.patch\`
+
+          ### Changed files
+
+          \`\`\`
+          $FILES
+          \`\`\`
+
+          EOF
+
+            if [ "$APPLY_RC" -ne 0 ]; then
+
+              cat >> "$REPORT" <<EOF
+
+          ### Apply check output
+
+          \`\`\`
+          $(cat "$APPLY_LOG")
+          \`\`\`
+
+          EOF
+
             fi
 
-            # ------------------------------------------------------
-            # MISSING COMMIT
-            # ------------------------------------------------------
+          done < "$COMMITS_FILE"
 
-            MISSING_COUNT=$((MISSING_COUNT + 1))
+      # ============================================================
+      # 10. FINAL METADATA
+      # ============================================================
+      - name: Generate Final Metadata
+        continue-on-error: true
+        run: |
+          set +e
 
-            echo \
-              "$NUM | $SHA | $DATE | $SUBSYSTEM | $APPLY_STATUS | $PATH_STATUS | $SUBJECT" \
-              >> "$MISSING"
+          MISSING_COUNT="$(
+            grep -c . \
+            manipvlator-analysis/missing.txt \
+            2>/dev/null || true
+          )"
 
-            # ------------------------------------------------------
-            # REPORT
-            # ------------------------------------------------------
+          PRESENT_COUNT="$(
+            grep -c . \
+            manipvlator-analysis/already-present.txt \
+            2>/dev/null || true
+          )"
 
-            {
-              echo
-              echo "### $NUM — $SUBJECT"
-              echo
-              echo "- **Commit:** \`$SHA\`"
-              echo "- **Date:** $DATE"
-              echo "- **Author:** $AUTHOR"
-              echo "- **Subsystem:** $SUBSYSTEM"
-              echo "- **Files changed:** $FILE_COUNT"
-              echo "- **Apply check:** $APPLY_STATUS"
-              echo "- **Path check:** $PATH_STATUS"
-              echo "- **Patch:** \`missing-patches/$(basename "$PATCH_FILE")\`"
-              echo
-              echo "**Changed files:**"
-              echo
-              echo '```text'
-              echo "$FILES"
-              echo '```'
-              echo
+          ERROR_COUNT="$(
+            grep -c . \
+            manipvlator-analysis/errors.txt \
+            2>/dev/null || true
+          )"
 
-              if [ -n "$MISSING_FILES" ]; then
+          cat > manipvlator-analysis/metadata.txt <<EOF
+          Manipvlator Comparison Metadata
+          =================================
 
-                echo "**Missing paths in Red-A-Hawk:**"
-                echo
-                echo '```text'
-                echo "$MISSING_FILES"
-                echo '```'
-                echo
-
-              fi
-
-              echo "---"
-
-            } >> "$REPORT"
-
-          done
-
-          # ========================================================
-          # SUMMARY
-          # ========================================================
-
-          {
-            echo
-            echo "## Summary"
-            echo
-            echo "| Metric | Count |"
-            echo "|---|---:|"
-            echo "| Commits analyzed | $ANALYZED |"
-            echo "| Missing / candidates | $MISSING_COUNT |"
-            echo "| Already present/equivalent | $PRESENT_COUNT |"
-            echo "| Clean apply | $CLEAN_COUNT |"
-            echo "| Conflict | $CONFLICT_COUNT |"
-            echo "| Errors | $ERROR_COUNT |"
-            echo
-            echo "## Comparison"
-            echo
-            echo "- Common ancestor: \`$MERGE_BASE\`"
-            echo "- Common ancestor subject: $BASE_SUBJECT"
-            echo "- Common ancestor date: $BASE_DATE"
-            echo "- Stop commit: \`$STOP_COMMIT\`"
-            echo
-            echo "## Ordering"
-            echo
-            echo "All missing patches are ordered:"
-            echo
-            echo "**OLDEST -> NEWEST**"
-            echo
-            echo "## Important"
-            echo
-            echo "\`CLEAN_APPLY\` means only that the original patch"
-            echo "passes \`git apply --check\` against branch 16."
-            echo
-            echo "It does not prove semantic compatibility."
-            echo
-            echo "\`CONFLICT\` means the original patch requires"
-            echo "manual backporting or adaptation."
-          } >> "$REPORT"
-
-          # ========================================================
-          # METADATA
-          # ========================================================
-
-          cat > "$OUT/metadata.txt" <<EOF
-          Target:
+          Target repository:
           Red-A-Hawk/los_kernel_xiaomi_sm6150
 
           Target branch:
           16
 
-          Reference:
+          Reference repository:
           manipvlator/los_kernel_xiaomi_sm6150
 
           Reference branch:
-          stable
+          $MANIP_BRANCH
 
-          Stop commit:
-          $STOP_COMMIT
+          Start commit:
+          $START_COMMIT
 
-          Common ancestor:
-          $MERGE_BASE
+          Reference HEAD:
+          $MANIP_HEAD
 
-          Order:
+          Total commits analyzed:
+          $MANIP_COMMIT_COUNT
+
+          Missing:
+          $MISSING_COUNT
+
+          Already present/equivalent:
+          $PRESENT_COUNT
+
+          Errors:
+          $ERROR_COUNT
+
+          Direction:
           OLDEST -> NEWEST
 
-          Source modified:
-          NO
+          START COMMIT INCLUDED:
+          YES
+
+          COMMITS BEFORE START:
+          NOT ANALYZED
 
           Cherry-pick:
           NO
 
+          Commit:
+          NO
+
           Push:
+          NO
+
+          Reset:
+          NO
+
+          Source modification:
           NO
           EOF
 
-          # ========================================================
-          # CONSOLE
-          # ========================================================
+          cat > manipvlator-analysis/README.txt <<EOF
+          Manipvlator Kernel Comparison
+          ==============================
+
+          Target:
+          Red-A-Hawk/los_kernel_xiaomi_sm6150
+
+          Branch:
+          16
+
+          Reference:
+          manipvlator/los_kernel_xiaomi_sm6150
+
+          Start:
+          $START_COMMIT
+
+          End:
+          $MANIP_HEAD
+
+          The START commit itself is included.
+
+          Everything before START_COMMIT is ignored.
+
+          Commits are processed oldest to newest.
+
+          Patch-ID is used to detect equivalent changes.
+
+          Missing commits are exported as individual patches.
+
+          No patches were applied.
+
+          No source files were modified.
+
+          No commits were created.
+
+          No push was performed.
+          EOF
 
           echo
           echo "============================================================"
-          echo "MANIPVLATOR COMPARISON COMPLETE"
+          echo " FINAL RESULT"
           echo "============================================================"
-          echo
-          echo "Common ancestor : $MERGE_BASE"
-          echo "Stop commit     : $STOP_COMMIT"
-          echo "Analyzed        : $ANALYZED"
-          echo "Missing         : $MISSING_COUNT"
-          echo "Already present : $PRESENT_COUNT"
-          echo "Clean apply     : $CLEAN_COUNT"
-          echo "Conflicts       : $CONFLICT_COUNT"
-          echo "Errors          : $ERROR_COUNT"
-          echo
-          echo "ORDER: OLDEST -> NEWEST"
-          echo
+          echo "Start commit : $START_COMMIT"
+          echo "End commit   : $MANIP_HEAD"
+          echo "Analyzed     : $MANIP_COMMIT_COUNT"
+          echo "Missing      : $MISSING_COUNT"
+          echo "Present      : $PRESENT_COUNT"
+          echo "Errors       : $ERROR_COUNT"
           echo "============================================================"
-
-          exit 0
 
       # ============================================================
-      # 4. SHOW RESULTS
+      # 11. GITHUB STEP SUMMARY
       # ============================================================
-      - name: Show result
+      - name: GitHub Summary
         if: always()
         continue-on-error: true
         run: |
-          echo "============================================================"
-          echo "MANIPVLATOR ANALYSIS"
-          echo "============================================================"
+          set +e
 
-          if [ -d "manipvlator-analysis" ]; then
-            find manipvlator-analysis \
-              -type f \
-              -printf '%p\n' |
-              sort
-          else
-            echo "No analysis directory."
-          fi
+          MISSING_COUNT="$(
+            grep -c . \
+            manipvlator-analysis/missing.txt \
+            2>/dev/null || true
+          )"
+
+          PRESENT_COUNT="$(
+            grep -c . \
+            manipvlator-analysis/already-present.txt \
+            2>/dev/null || true
+          )"
+
+          ERROR_COUNT="$(
+            grep -c . \
+            manipvlator-analysis/errors.txt \
+            2>/dev/null || true
+          )"
+
+          {
+            echo "## Manipvlator Kernel Comparison"
+            echo
+            echo "| Item | Result |"
+            echo "|---|---|"
+            echo "| Target branch | \`16\` |"
+            echo "| Start commit | \`$START_COMMIT\` |"
+            echo "| Reference branch | \`$MANIP_BRANCH\` |"
+            echo "| Reference HEAD | \`$MANIP_HEAD\` |"
+            echo "| Commits analyzed | $MANIP_COMMIT_COUNT |"
+            echo "| Missing | $MISSING_COUNT |"
+            echo "| Already present/equivalent | $PRESENT_COUNT |"
+            echo "| Errors | $ERROR_COUNT |"
+            echo
+            echo "### Range"
+            echo
+            echo "Analysis begins at:"
+            echo
+            echo "\`$START_COMMIT\`"
+            echo
+            echo "The START commit itself is included."
+            echo
+            echo "Everything before it is ignored."
+            echo
+            echo "### Safety"
+            echo
+            echo "- No cherry-pick"
+            echo "- No commit"
+            echo "- No push"
+            echo "- No reset"
+            echo "- No source modification"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ============================================================
-      # 5. UPLOAD ARTIFACT
+      # 12. UPLOAD ARTIFACT
       # ============================================================
-      - name: Upload comparison artifact
+      - name: Upload Manipvlator Analysis
         if: always()
-        continue-on-error: true
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
-          name: manipvlator-missing-commits
+          name: manipvlator-kernel-analysis
           path: manipvlator-analysis/
           if-no-files-found: warn
-          compression-level: 6
+          retention-days: 30
