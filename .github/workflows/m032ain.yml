@@ -42,7 +42,7 @@ jobs:
           echo "============================================================"
 
       # ============================================================
-      # 3. FETCH OPENELA TAG
+      # 3. FETCH OPENELA
       # ============================================================
       - name: Fetch OpenELA
         continue-on-error: true
@@ -50,18 +50,15 @@ jobs:
           set +e
 
           git remote remove openela 2>/dev/null || true
-
           git remote add openela "$OPENELA_REPO"
 
           git fetch --no-tags openela \
             "refs/tags/$OPENELA_TAG:refs/tags/$OPENELA_TAG"
 
-          FETCH_RC=$?
+          RC=$?
 
-          echo "Fetch exit code: $FETCH_RC"
-
-          if [ "$FETCH_RC" -ne 0 ]; then
-            echo "ERROR: Failed to fetch OpenELA tag."
+          if [ "$RC" -ne 0 ]; then
+            echo "ERROR: Failed to fetch OpenELA."
             exit 0
           fi
 
@@ -80,7 +77,7 @@ jobs:
             "$OPENELA_TAG"
 
       # ============================================================
-      # 4. DETECT TARGET
+      # 4. TARGET INFORMATION
       # ============================================================
       - name: Detect Target
         continue-on-error: true
@@ -93,9 +90,7 @@ jobs:
             make -s kernelversion 2>/dev/null || true
           )"
 
-          if [ -z "$TARGET_VERSION" ]; then
-            TARGET_VERSION="unknown"
-          fi
+          [ -n "$TARGET_VERSION" ] || TARGET_VERSION="unknown"
 
           echo "TARGET=$TARGET" >> "$GITHUB_ENV"
           echo "TARGET_VERSION=$TARGET_VERSION" >> "$GITHUB_ENV"
@@ -114,7 +109,31 @@ jobs:
           echo "Kernel version: $TARGET_VERSION"
 
       # ============================================================
-      # 5. FIND COMMON ANCESTOR
+      # 5. VERIFY OPENELA TAG
+      # ============================================================
+      - name: Verify OpenELA Tag
+        continue-on-error: true
+        run: |
+          set +e
+
+          echo
+          echo "============================================================"
+          echo " VERIFY OPENELA TAG"
+          echo "============================================================"
+
+          echo "Tag:"
+          echo "$OPENELA_TAG"
+
+          echo
+          echo "Commit:"
+          git rev-parse "$OPENELA_TAG"
+
+          echo
+          echo "Commit subject:"
+          git show -s --format='%s' "$OPENELA_TAG"
+
+      # ============================================================
+      # 6. FIND COMMON ANCESTOR
       # ============================================================
       - name: Find Common Ancestor
         continue-on-error: true
@@ -128,7 +147,7 @@ jobs:
           )"
 
           if [ -z "$MERGE_BASE" ]; then
-            echo "ERROR: Could not find common ancestor."
+            echo "ERROR: Common ancestor not found."
             exit 0
           fi
 
@@ -145,9 +164,9 @@ jobs:
             "$MERGE_BASE"
 
       # ============================================================
-      # 6. PREPARE DIRECTORIES
+      # 7. PREPARE DIRECTORIES
       # ============================================================
-      - name: Prepare Analysis Directories
+      - name: Prepare Analysis
         continue-on-error: true
         run: |
           set +e
@@ -159,56 +178,125 @@ jobs:
             openela-analysis/logs \
             openela-analysis/patch-id
 
-          touch openela-analysis/missing.txt
-          touch openela-analysis/already-present.txt
-          touch openela-analysis/errors.txt
-          touch openela-analysis/skipped.txt
+          touch \
+            openela-analysis/missing.txt \
+            openela-analysis/already-present.txt \
+            openela-analysis/errors.txt \
+            openela-analysis/skipped.txt
 
       # ============================================================
-      # 7. COLLECT ALL OPENELA COMMITS
+      # 8. DETERMINE OPENELA HISTORY TO ANALYZE
       #
       # IMPORTANT:
-      # NO --no-merges
       #
-      # This includes merge commits.
+      # v4.14.357-openela itself is the common point.
       #
-      # ORDER:
-      # OLDEST -> NEWEST
+      # Therefore we analyze the OpenELA history leading INTO
+      # that point instead of using:
+      #
+      #     MERGE_BASE..OPENELA_TAG
+      #
+      # which correctly returns 0.
       # ============================================================
-      - name: Collect OpenELA Commits
+      - name: Collect OpenELA History
         continue-on-error: true
         run: |
           set +e
 
           COMMITS_FILE="openela-analysis/openela-commits.txt"
 
+          : > "$COMMITS_FILE"
+
+          echo
+          echo "============================================================"
+          echo " OPENELA HISTORY"
+          echo "============================================================"
+
+          echo "OpenELA endpoint:"
+          echo "$OPENELA_COMMIT"
+
+          echo
+          echo "Common ancestor:"
+          echo "$MERGE_BASE"
+
+          # --------------------------------------------------------
+          # Find the previous OpenELA release.
+          #
+          # This gives us the release-to-release history leading
+          # into v4.14.357-openela.
+          # --------------------------------------------------------
+
+          PREVIOUS_TAG="$(
+            git tag -l 'v4.14.*-openela' |
+            grep -v "^$OPENELA_TAG$" |
+            sort -V |
+            tail -n 1
+          )"
+
+          # The local tag list may not contain all OpenELA tags
+          # because fetch was limited to the requested tag.
+          #
+          # Therefore fetch the release tags explicitly.
+          git fetch openela \
+            'refs/tags/v4.14.*-openela:refs/tags/v4.14.*-openela' \
+            2>/dev/null || true
+
+          PREVIOUS_TAG="$(
+            git tag -l 'v4.14.*-openela' |
+            grep -v "^$OPENELA_TAG$" |
+            sort -V |
+            tail -n 1
+          )"
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "ERROR: Previous OpenELA tag could not be determined."
+
+            printf '%s\n' \
+              "Previous OpenELA tag unavailable" \
+              >> openela-analysis/errors.txt
+
+            exit 0
+          fi
+
+          PREVIOUS_COMMIT="$(
+            git rev-parse "$PREVIOUS_TAG"
+          )"
+
+          echo "Previous OpenELA tag:"
+          echo "$PREVIOUS_TAG"
+
+          echo
+          echo "Previous OpenELA commit:"
+          echo "$PREVIOUS_COMMIT"
+
+          echo
+          echo "============================================================"
+          echo " COMMITS TO ANALYZE"
+          echo "============================================================"
+
           git rev-list \
             --reverse \
-            "$MERGE_BASE..$OPENELA_COMMIT" \
+            "$PREVIOUS_COMMIT..$OPENELA_COMMIT" \
             > "$COMMITS_FILE"
 
           TOTAL="$(
             wc -l < "$COMMITS_FILE"
           )"
 
-          echo "OPENELA_COMMIT_COUNT=$TOTAL" >> "$GITHUB_ENV"
-
-          echo
-          echo "============================================================"
-          echo " OPENELA COMMITS"
-          echo "============================================================"
-
           echo "Total commits: $TOTAL"
           echo "Order: OLDEST -> NEWEST"
           echo "Merge commits: INCLUDED"
+
+          echo "OPENELA_COMMIT_COUNT=$TOTAL" >> "$GITHUB_ENV"
+          echo "OPENELA_PREVIOUS_TAG=$PREVIOUS_TAG" >> "$GITHUB_ENV"
+          echo "OPENELA_PREVIOUS_COMMIT=$PREVIOUS_COMMIT" >> "$GITHUB_ENV"
+
           echo
 
           nl -ba "$COMMITS_FILE"
 
       # ============================================================
-      # 8. BUILD TARGET PATCH-ID DATABASE
-      #
-      # Used to detect equivalent changes even when SHA differs.
+      # 9. BUILD TARGET PATCH-ID DATABASE
       # ============================================================
       - name: Build Target Patch-ID Database
         continue-on-error: true
@@ -219,7 +307,10 @@ jobs:
 
           : > "$TARGET_PATCH_IDS"
 
-          echo "Building target patch-id database..."
+          echo
+          echo "============================================================"
+          echo " BUILD TARGET PATCH-ID DATABASE"
+          echo "============================================================"
 
           git log \
             --all \
@@ -239,13 +330,37 @@ jobs:
             )"
 
             # ------------------------------------------------------
-            # Normal commit
+            # NORMAL COMMIT
             # ------------------------------------------------------
             if [ "$PARENT_COUNT" -eq 1 ]; then
 
               PATCH_ID="$(
                 git diff \
                   "$SHA^" \
+                  "$SHA" 2>/dev/null |
+                git patch-id --stable 2>/dev/null |
+                awk '{print $1}'
+              )"
+
+              if [ -n "$PATCH_ID" ]; then
+                echo "$PATCH_ID $SHA" >> "$TARGET_PATCH_IDS"
+              fi
+
+            # ------------------------------------------------------
+            # MERGE COMMIT
+            #
+            # Compare against FIRST parent.
+            # ------------------------------------------------------
+            elif [ "$PARENT_COUNT" -gt 1 ]; then
+
+              FIRST_PARENT="$(
+                echo "$PARENTS" |
+                awk '{print $1}'
+              )"
+
+              PATCH_ID="$(
+                git diff \
+                  "$FIRST_PARENT" \
                   "$SHA" 2>/dev/null |
                 git patch-id --stable 2>/dev/null |
                 awk '{print $1}'
@@ -273,7 +388,7 @@ jobs:
           echo "Target patch IDs: $TARGET_PATCH_COUNT"
 
       # ============================================================
-      # 9. ANALYZE OPENELA COMMITS
+      # 10. ANALYZE OPENELA COMMITS
       # ============================================================
       - name: Analyze OpenELA Commits
         continue-on-error: true
@@ -282,44 +397,40 @@ jobs:
 
           COMMITS_FILE="openela-analysis/openela-commits.txt"
           TARGET_PATCH_IDS="openela-analysis/patch-id/target.patchids"
-
           REPORT="openela-analysis/report.md"
 
           cat > "$REPORT" <<EOF
           # OpenELA 4.14.357 Comparison
 
-          ## Target
-
-          Repository:
+          Target:
           Red-A-Hawk/los_kernel_xiaomi_sm6150
 
           Branch:
           16
 
-          HEAD:
+          Target HEAD:
           $TARGET
 
-          Kernel version:
+          Target kernel version:
           $TARGET_VERSION
 
-          ## OpenELA
-
-          Repository:
+          OpenELA:
           openela/kernel-lts
 
-          Tag:
+          OpenELA tag:
           $OPENELA_TAG
 
-          Commit:
+          OpenELA commit:
           $OPENELA_COMMIT
 
-          ## Range
+          Previous OpenELA tag:
+          $OPENELA_PREVIOUS_TAG
+
+          Previous OpenELA commit:
+          $OPENELA_PREVIOUS_COMMIT
 
           Common ancestor:
           $MERGE_BASE
-
-          OpenELA endpoint:
-          $OPENELA_COMMIT
 
           Order:
           OLDEST -> NEWEST
@@ -327,19 +438,11 @@ jobs:
           Merge commits:
           INCLUDED
 
-          ## Safety
+          Analysis only:
+          YES
 
-          Analysis only.
-
-          No cherry-pick.
-
-          No commit.
-
-          No push.
-
-          No reset.
-
-          No source modification.
+          Source modification:
+          NO
 
           EOF
 
@@ -355,7 +458,6 @@ jobs:
             echo "============================================================"
             echo " OPENELA COMMIT $INDEX / $OPENELA_COMMIT_COUNT"
             echo "============================================================"
-            echo "SHA: $SHA"
 
             SUBJECT="$(
               git show -s \
@@ -386,33 +488,14 @@ jobs:
               echo "$PARENTS" | wc -w
             )"
 
-            echo "Subject : $SUBJECT"
-            echo "Date    : $DATE"
-            echo "Author  : $AUTHOR"
-            echo "Parents : $PARENT_COUNT"
-
-            # ======================================================
-            # DETERMINE COMMIT TYPE
-            # ======================================================
             if [ "$PARENT_COUNT" -gt 1 ]; then
-
               COMMIT_TYPE="MERGE"
-
             elif [ "$PARENT_COUNT" -eq 1 ]; then
-
               COMMIT_TYPE="NORMAL"
-
             else
-
               COMMIT_TYPE="ROOT"
-
             fi
 
-            echo "Type    : $COMMIT_TYPE"
-
-            # ======================================================
-            # GET CHANGED FILES
-            # ======================================================
             FILES="$(
               git diff-tree \
                 --no-commit-id \
@@ -421,51 +504,40 @@ jobs:
                 "$SHA" 2>/dev/null
             )"
 
-            # ======================================================
-            # SUBSYSTEM CLASSIFICATION
-            # ======================================================
             SUBSYSTEM="OTHER"
 
             if echo "$FILES" | grep -q 'arch/'; then
               SUBSYSTEM="ARCH"
-
             elif echo "$FILES" | grep -q 'drivers/'; then
               SUBSYSTEM="DRIVERS"
-
             elif echo "$FILES" | grep -q 'fs/'; then
               SUBSYSTEM="FILESYSTEM"
-
             elif echo "$FILES" | grep -q 'mm/'; then
               SUBSYSTEM="MM"
-
             elif echo "$FILES" | grep -q 'net/'; then
               SUBSYSTEM="NETWORK"
-
             elif echo "$FILES" | grep -q 'kernel/'; then
               SUBSYSTEM="KERNEL"
-
             elif echo "$FILES" | grep -q 'include/'; then
               SUBSYSTEM="INCLUDE"
-
             elif echo "$FILES" | grep -q 'security/'; then
               SUBSYSTEM="SECURITY"
-
             elif echo "$FILES" | grep -q 'crypto/'; then
               SUBSYSTEM="CRYPTO"
-
             elif echo "$FILES" | grep -q 'block/'; then
               SUBSYSTEM="BLOCK"
-
             elif echo "$FILES" | grep -q 'ipc/'; then
               SUBSYSTEM="IPC"
-
             elif echo "$FILES" | grep -q 'scripts/'; then
               SUBSYSTEM="SCRIPTS"
             fi
 
             # ======================================================
-            # NORMAL COMMIT
+            # PATCH-ID
             # ======================================================
+
+            PATCH_ID=""
+
             if [ "$PARENT_COUNT" -eq 1 ]; then
 
               PATCH_ID="$(
@@ -476,20 +548,35 @@ jobs:
                 awk '{print $1}'
               )"
 
-              echo "Patch ID: $PATCH_ID"
+            elif [ "$PARENT_COUNT" -gt 1 ]; then
 
-              if [ -z "$PATCH_ID" ]; then
+              FIRST_PARENT="$(
+                echo "$PARENTS" |
+                awk '{print $1}'
+              )"
 
-                echo "STATUS: PATCH-ID UNAVAILABLE"
+              PATCH_ID="$(
+                git diff \
+                  "$FIRST_PARENT" \
+                  "$SHA" 2>/dev/null |
+                git patch-id --stable 2>/dev/null |
+                awk '{print $1}'
+              )"
 
-                printf '%s | %s | patch-id unavailable | %s\n' \
-                  "$SHA" \
-                  "$DATE" \
-                  "$SUBJECT" \
-                  >> openela-analysis/errors.txt
+            fi
 
-                continue
-              fi
+            echo "SHA       : $SHA"
+            echo "Subject   : $SUBJECT"
+            echo "Type      : $COMMIT_TYPE"
+            echo "Patch ID  : $PATCH_ID"
+
+            # ======================================================
+            # EQUIVALENCE CHECK
+            # ======================================================
+
+            MATCH_SHA=""
+
+            if [ -n "$PATCH_ID" ]; then
 
               MATCH_SHA="$(
                 awk \
@@ -498,97 +585,28 @@ jobs:
                   "$TARGET_PATCH_IDS"
               )"
 
-              if [ -n "$MATCH_SHA" ]; then
+            fi
 
-                echo "STATUS: ALREADY PRESENT / EQUIVALENT"
-                echo "Equivalent target SHA: $MATCH_SHA"
+            if [ -n "$MATCH_SHA" ]; then
 
-                printf '%s | %s | %s | equivalent=%s\n' \
-                  "$SHA" \
-                  "$DATE" \
-                  "$SUBJECT" \
-                  "$MATCH_SHA" \
-                  >> openela-analysis/already-present.txt
+              echo "STATUS    : ALREADY PRESENT / EQUIVALENT"
+              echo "TARGET SHA: $MATCH_SHA"
 
-                continue
-              fi
+              printf '%s | %s | %s | equivalent=%s\n' \
+                "$SHA" \
+                "$DATE" \
+                "$SUBJECT" \
+                "$MATCH_SHA" \
+                >> openela-analysis/already-present.txt
 
-            # ======================================================
-            # MERGE COMMIT
-            #
-            # A merge commit is compared against its FIRST parent.
-            #
-            # We do NOT exclude it.
-            # ======================================================
-            elif [ "$PARENT_COUNT" -gt 1 ]; then
-
-              FIRST_PARENT="$(
-                echo "$PARENTS" |
-                awk '{print $1}'
-              )"
-
-              MERGE_DIFF="$(
-                git diff \
-                  "$FIRST_PARENT" \
-                  "$SHA" 2>/dev/null
-              )"
-
-              if [ -z "$MERGE_DIFF" ]; then
-
-                echo "STATUS: MERGE HAS NO FIRST-PARENT DIFF"
-
-                printf '%s | %s | merge has no first-parent diff | %s\n' \
-                  "$SHA" \
-                  "$DATE" \
-                  "$SUBJECT" \
-                  >> openela-analysis/skipped.txt
-
-                continue
-              fi
-
-              PATCH_ID="$(
-                printf '%s\n' "$MERGE_DIFF" |
-                git patch-id --stable 2>/dev/null |
-                awk '{print $1}'
-              )"
-
-              echo "Merge patch ID: $PATCH_ID"
-
-              if [ -n "$PATCH_ID" ]; then
-
-                MATCH_SHA="$(
-                  awk \
-                    -v id="$PATCH_ID" \
-                    '$1 == id {print $2; exit}' \
-                    "$TARGET_PATCH_IDS"
-                )"
-
-                if [ -n "$MATCH_SHA" ]; then
-
-                  echo "STATUS: MERGE EQUIVALENT PRESENT"
-                  echo "Equivalent target SHA: $MATCH_SHA"
-
-                  printf '%s | %s | %s | equivalent=%s\n' \
-                    "$SHA" \
-                    "$DATE" \
-                    "$SUBJECT" \
-                    "$MATCH_SHA" \
-                    >> openela-analysis/already-present.txt
-
-                  continue
-                fi
-
-              fi
-
-            else
-
-              echo "STATUS: ROOT COMMIT"
+              continue
 
             fi
 
             # ======================================================
             # MISSING COMMIT
             # ======================================================
+
             INDEX_PADDED="$(
               printf "%04d" "$INDEX"
             )"
@@ -602,18 +620,16 @@ jobs:
               cut -c1-100
             )"
 
-            if [ -z "$SAFE_SUBJECT" ]; then
-              SAFE_SUBJECT="openela-commit"
-            fi
+            [ -n "$SAFE_SUBJECT" ] || SAFE_SUBJECT="openela-commit"
 
             PATCH_FILE="openela-analysis/missing-patches/${INDEX_PADDED}-${SAFE_SUBJECT}.patch"
 
-            echo "STATUS: MISSING"
-            echo "Patch: $PATCH_FILE"
+            echo "STATUS    : MISSING"
 
             # ======================================================
             # GENERATE PATCH
             # ======================================================
+
             if [ "$PARENT_COUNT" -gt 1 ]; then
 
               FIRST_PARENT="$(
@@ -632,17 +648,17 @@ jobs:
 
               if [ "$PATCH_RC" -eq 0 ]; then
 
-                PATCH_HEADER="$(
+                HEADER="$(
                   git show \
                     --format=email \
                     --no-patch \
                     "$SHA" 2>/dev/null
                 )"
 
-                if [ -n "$PATCH_HEADER" ]; then
+                if [ -n "$HEADER" ]; then
 
                   {
-                    echo "$PATCH_HEADER"
+                    echo "$HEADER"
                     echo
                     cat "$PATCH_FILE"
                   } > "${PATCH_FILE}.tmp"
@@ -668,9 +684,6 @@ jobs:
 
             fi
 
-            # ======================================================
-            # PATCH GENERATION ERROR
-            # ======================================================
             if [ "$PATCH_RC" -ne 0 ]; then
 
               echo "ERROR: Patch generation failed."
@@ -687,11 +700,11 @@ jobs:
             fi
 
             # ======================================================
-            # APPLY CHECK
+            # PATCH CHECK
             #
-            # IMPORTANT:
-            # This DOES NOT modify the kernel.
+            # Does not apply the patch.
             # ======================================================
+
             APPLY_LOG="openela-analysis/logs/${INDEX_PADDED}-apply.log"
 
             git apply \
@@ -711,6 +724,7 @@ jobs:
             # ======================================================
             # RECORD MISSING
             # ======================================================
+
             printf '%s | %s | %s | %s | %s | %s | %s\n' \
               "$SHA" \
               "$DATE" \
@@ -724,6 +738,7 @@ jobs:
             # ======================================================
             # REPORT
             # ======================================================
+
             cat >> "$REPORT" <<EOF
 
           ---
@@ -742,13 +757,9 @@ jobs:
 
           $AUTHOR
 
-          **Commit type**
+          **Type**
 
           $COMMIT_TYPE
-
-          **Parent count**
-
-          $PARENT_COUNT
 
           **Subsystem**
 
@@ -774,24 +785,10 @@ jobs:
 
           EOF
 
-            if [ "$APPLY_RC" -ne 0 ]; then
-
-              cat >> "$REPORT" <<EOF
-
-          ### Apply check output
-
-          \`\`\`
-          $(cat "$APPLY_LOG")
-          \`\`\`
-
-          EOF
-
-            fi
-
           done < "$COMMITS_FILE"
 
       # ============================================================
-      # 10. FINAL SUMMARY
+      # 11. FINAL METADATA
       # ============================================================
       - name: Generate Final Metadata
         continue-on-error: true
@@ -800,26 +797,26 @@ jobs:
 
           MISSING_COUNT="$(
             grep -c . \
-            openela-analysis/missing.txt \
-            2>/dev/null || true
+              openela-analysis/missing.txt \
+              2>/dev/null || true
           )"
 
           PRESENT_COUNT="$(
             grep -c . \
-            openela-analysis/already-present.txt \
-            2>/dev/null || true
+              openela-analysis/already-present.txt \
+              2>/dev/null || true
           )"
 
           ERROR_COUNT="$(
             grep -c . \
-            openela-analysis/errors.txt \
-            2>/dev/null || true
+              openela-analysis/errors.txt \
+              2>/dev/null || true
           )"
 
           SKIPPED_COUNT="$(
             grep -c . \
-            openela-analysis/skipped.txt \
-            2>/dev/null || true
+              openela-analysis/skipped.txt \
+              2>/dev/null || true
           )"
 
           cat > openela-analysis/metadata.txt <<EOF
@@ -846,6 +843,12 @@ jobs:
 
           OpenELA commit:
           $OPENELA_COMMIT
+
+          Previous OpenELA tag:
+          $OPENELA_PREVIOUS_TAG
+
+          Previous OpenELA commit:
+          $OPENELA_PREVIOUS_COMMIT
 
           Common ancestor:
           $MERGE_BASE
@@ -900,37 +903,36 @@ jobs:
           Branch:
           16
 
-          Reference:
+          OpenELA:
           openela/kernel-lts
 
           Tag:
           $OPENELA_TAG
 
-          Start:
-          $MERGE_BASE
+          Previous OpenELA tag:
+          $OPENELA_PREVIOUS_TAG
 
-          End:
-          $OPENELA_COMMIT
+          The comparison analyzes the OpenELA history leading
+          into v4.14.357-openela.
 
-          All commits between the common ancestor and the
-          OpenELA 4.14.357 tag are analyzed.
-
-          Merge commits are INCLUDED.
+          Merge commits are included.
 
           Commits are processed oldest to newest.
 
-          Equivalent patches already present in the target
-          are excluded from the missing-patch list.
+          Patch-ID equivalence is used to detect changes already
+          present in the target tree.
 
           Missing commits are exported individually.
 
-          No patches were applied.
+          No patch was applied.
 
           No source files were modified.
 
-          No commits were created.
+          No commit was created.
 
           No push was performed.
+
+          No reset was performed.
           EOF
 
           echo
@@ -940,8 +942,7 @@ jobs:
           echo "Target HEAD       : $TARGET"
           echo "Kernel version    : $TARGET_VERSION"
           echo "OpenELA tag       : $OPENELA_TAG"
-          echo "OpenELA commit    : $OPENELA_COMMIT"
-          echo "Common ancestor   : $MERGE_BASE"
+          echo "Previous tag      : $OPENELA_PREVIOUS_TAG"
           echo "Analyzed          : $OPENELA_COMMIT_COUNT"
           echo "Missing           : $MISSING_COUNT"
           echo "Already present   : $PRESENT_COUNT"
@@ -950,7 +951,7 @@ jobs:
           echo "============================================================"
 
       # ============================================================
-      # 11. GITHUB STEP SUMMARY
+      # 12. GITHUB SUMMARY
       # ============================================================
       - name: GitHub Summary
         if: always()
@@ -960,26 +961,20 @@ jobs:
 
           MISSING_COUNT="$(
             grep -c . \
-            openela-analysis/missing.txt \
-            2>/dev/null || true
+              openela-analysis/missing.txt \
+              2>/dev/null || true
           )"
 
           PRESENT_COUNT="$(
             grep -c . \
-            openela-analysis/already-present.txt \
-            2>/dev/null || true
+              openela-analysis/already-present.txt \
+              2>/dev/null || true
           )"
 
           ERROR_COUNT="$(
             grep -c . \
-            openela-analysis/errors.txt \
-            2>/dev/null || true
-          )"
-
-          SKIPPED_COUNT="$(
-            grep -c . \
-            openela-analysis/skipped.txt \
-            2>/dev/null || true
+              openela-analysis/errors.txt \
+              2>/dev/null || true
           )"
 
           {
@@ -990,22 +985,15 @@ jobs:
             echo "| Target branch | \`16\` |"
             echo "| Target version | \`$TARGET_VERSION\` |"
             echo "| OpenELA tag | \`$OPENELA_TAG\` |"
-            echo "| OpenELA commit | \`$OPENELA_COMMIT\` |"
-            echo "| Common ancestor | \`$MERGE_BASE\` |"
+            echo "| Previous OpenELA tag | \`$OPENELA_PREVIOUS_TAG\` |"
             echo "| Commits analyzed | $OPENELA_COMMIT_COUNT |"
             echo "| Missing | $MISSING_COUNT |"
             echo "| Already present/equivalent | $PRESENT_COUNT |"
             echo "| Errors | $ERROR_COUNT |"
-            echo "| Skipped | $SKIPPED_COUNT |"
-            echo
-            echo "### Analysis"
-            echo
-            echo "- Merge commits included"
-            echo "- Oldest -> newest"
-            echo "- Patch-ID equivalence check"
             echo
             echo "### Safety"
             echo
+            echo "- Analysis only"
             echo "- No cherry-pick"
             echo "- No commit"
             echo "- No push"
@@ -1014,7 +1002,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ============================================================
-      # 12. UPLOAD ARTIFACT
+      # 13. UPLOAD ARTIFACT
       # ============================================================
       - name: Upload OpenELA Analysis
         if: always()
