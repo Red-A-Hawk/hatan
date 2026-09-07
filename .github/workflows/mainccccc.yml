@@ -1,0 +1,283 @@
+name: Check Polly Support in Clang r547379
+
+"on":
+  workflow_dispatch:
+
+jobs:
+  check-polly-support:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # ============================================================
+    # 1. CHECKOUT KERNEL (hatan @ xxx-17)
+    # ============================================================
+    - name: Checkout Kernel
+      uses: actions/checkout@v4
+      with:
+        repository: Red-A-Hawk/hatan
+        ref: xxx-17
+        fetch-depth: 1
+
+
+    # ============================================================
+    # 2. DOWNLOAD CLANG r547379
+    # ============================================================
+    - name: Download Clang r547379
+      run: |
+        set -e
+
+        echo "============================================================"
+        echo "Downloading crDroid Clang r547379"
+        echo "============================================================"
+
+        git clone --depth=1 \
+          https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+          clang
+
+        echo
+        echo "Done."
+
+
+    # ============================================================
+    # 3. VERIFY CLANG VERSION / TARGET
+    # ============================================================
+    - name: Verify Clang Version
+      run: |
+        set -e
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+        echo "============================================================"
+        echo "CLANG VERSION"
+        echo "============================================================"
+
+        which clang
+        clang --version
+
+        echo
+        echo "============================================================"
+        echo "CLANG -cc1 SUPPORTED PASSES (searching for polly)"
+        echo "============================================================"
+
+        clang -mllvm -help-list-hidden -c -x c /dev/null -o /dev/null 2>&1 \
+          | grep -i polly || echo "[INFO] No 'polly' string found in -mllvm help output"
+
+
+    # ============================================================
+    # 4. TEST: DOES CLANG ACCEPT -mllvm -polly ?
+    # ============================================================
+    - name: Test -mllvm -polly
+      run: |
+        set +e
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+        echo "============================================================"
+        echo "TEST: -mllvm -polly"
+        echo "============================================================"
+
+        echo 'int main(){return 0;}' > /tmp/t.c
+
+        echo
+        echo "Command:"
+        echo "clang -mllvm -polly -c /tmp/t.c -o /tmp/t.o"
+        echo
+
+        clang -mllvm -polly -c /tmp/t.c -o /tmp/t.o
+        STATUS=$?
+
+        echo
+        echo "Exit code: $STATUS"
+
+        if [ "$STATUS" -eq 0 ]; then
+          echo "[OK] clang accepted -mllvm -polly"
+        else
+          echo "[FAIL] clang rejected -mllvm -polly"
+        fi
+
+        echo "POLLY_BASE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+
+    # ============================================================
+    # 5. TEST: FULL POLLY FLAG SET USED IN THE KERNEL MAKEFILE
+    # ============================================================
+    - name: Test Full Polly Flag Set
+      run: |
+        set +e
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+        echo "============================================================"
+        echo "TEST: FULL POLLY FLAG SET (as used in kernel Makefile)"
+        echo "============================================================"
+
+        echo 'int main(){return 0;}' > /tmp/t2.c
+
+        echo
+        echo "Command:"
+        echo "clang -mllvm -polly -mllvm -polly-ast-use-context \\"
+        echo "      -mllvm -polly-invariant-load-hoisting \\"
+        echo "      -mllvm -polly-run-inliner \\"
+        echo "      -mllvm -polly-vectorizer=stripmine \\"
+        echo "      -c /tmp/t2.c -o /tmp/t2.o"
+        echo
+
+        clang \
+          -mllvm -polly \
+          -mllvm -polly-ast-use-context \
+          -mllvm -polly-invariant-load-hoisting \
+          -mllvm -polly-run-inliner \
+          -mllvm -polly-vectorizer=stripmine \
+          -c /tmp/t2.c -o /tmp/t2.o
+        STATUS=$?
+
+        echo
+        echo "Exit code: $STATUS"
+
+        if [ "$STATUS" -eq 0 ]; then
+          echo "[OK] clang accepted full Polly flag set"
+        else
+          echo "[FAIL] clang rejected full Polly flag set"
+        fi
+
+        echo "POLLY_FULL_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+
+    # ============================================================
+    # 6. TEST: -polly-opt-fusion=max
+    # ============================================================
+    - name: Test -polly-opt-fusion=max
+      run: |
+        set +e
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+        echo "============================================================"
+        echo "TEST: -mllvm -polly-opt-fusion=max"
+        echo "============================================================"
+
+        echo 'int main(){return 0;}' > /tmp/t3.c
+
+        echo
+        echo "Command:"
+        echo "clang -mllvm -polly -mllvm -polly-opt-fusion=max -c /tmp/t3.c -o /tmp/t3.o"
+        echo
+
+        clang \
+          -mllvm -polly \
+          -mllvm -polly-opt-fusion=max \
+          -c /tmp/t3.c -o /tmp/t3.o
+        STATUS=$?
+
+        echo
+        echo "Exit code: $STATUS"
+
+        if [ "$STATUS" -eq 0 ]; then
+          echo "[OK] clang accepted -polly-opt-fusion=max"
+        else
+          echo "[FAIL] clang rejected -polly-opt-fusion=max"
+        fi
+
+        echo "POLLY_FUSION_MAX_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+
+    # ============================================================
+    # 7. TEST: -polly-loopfusion-greedy (for reference / comparison)
+    # ============================================================
+    - name: Test -polly-loopfusion-greedy
+      run: |
+        set +e
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+        echo "============================================================"
+        echo "TEST: -mllvm -polly-loopfusion-greedy (reference only)"
+        echo "============================================================"
+
+        echo 'int main(){return 0;}' > /tmp/t4.c
+
+        echo
+        echo "Command:"
+        echo "clang -mllvm -polly -mllvm -polly-loopfusion-greedy -c /tmp/t4.c -o /tmp/t4.o"
+        echo
+
+        clang \
+          -mllvm -polly \
+          -mllvm -polly-loopfusion-greedy \
+          -c /tmp/t4.c -o /tmp/t4.o
+        STATUS=$?
+
+        echo
+        echo "Exit code: $STATUS"
+
+        if [ "$STATUS" -eq 0 ]; then
+          echo "[OK] clang accepted -polly-loopfusion-greedy"
+        else
+          echo "[FAIL] clang rejected -polly-loopfusion-greedy"
+        fi
+
+        echo "POLLY_GREEDY_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+
+    # ============================================================
+    # 8. TEST: -mllvm -regalloc-enable-advisor=release (MLGO, for comparison)
+    # ============================================================
+    - name: Test MLGO Flag
+      run: |
+        set +e
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+        echo "============================================================"
+        echo "TEST: -mllvm -regalloc-enable-advisor=release (MLGO)"
+        echo "============================================================"
+
+        echo 'int main(){return 0;}' > /tmp/t5.c
+
+        clang \
+          -mllvm -regalloc-enable-advisor=release \
+          -c /tmp/t5.c -o /tmp/t5.o
+        STATUS=$?
+
+        echo
+        echo "Exit code: $STATUS"
+
+        if [ "$STATUS" -eq 0 ]; then
+          echo "[OK] clang accepted MLGO flag"
+        else
+          echo "[FAIL] clang rejected MLGO flag"
+        fi
+
+
+    # ============================================================
+    # 9. FINAL SUMMARY
+    # ============================================================
+    - name: Final Summary
+      run: |
+        echo "============================================================"
+        echo "POLLY SUPPORT SUMMARY - clang r547379"
+        echo "============================================================"
+
+        echo
+        echo "-mllvm -polly (base)              : exit code $POLLY_BASE_STATUS"
+        echo "Full Polly flag set (kernel-style) : exit code $POLLY_FULL_STATUS"
+        echo "-polly-opt-fusion=max              : exit code $POLLY_FUSION_MAX_STATUS"
+        echo "-polly-loopfusion-greedy           : exit code $POLLY_GREEDY_STATUS"
+
+        echo
+        echo "============================================================"
+        echo "INTERPRETATION"
+        echo "============================================================"
+
+        if [ "$POLLY_BASE_STATUS" -ne 0 ]; then
+          echo "[CONCLUSION] clang-r547379 was NOT built with Polly support."
+          echo "             -mllvm -polly itself is rejected/ignored/errors out."
+          echo "             This explains why 'POLLY: using ...' never appeared"
+          echo "             for this toolchain, regardless of DCE state."
+        else
+          echo "[CONCLUSION] clang-r547379 DOES accept -mllvm -polly."
+          echo "             The missing 'POLLY: using ...' line must have"
+          echo "             another cause (check Makefile execution order,"
+          echo "             or an earlier build failure in the same run)."
+        fi
