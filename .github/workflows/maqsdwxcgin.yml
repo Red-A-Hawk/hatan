@@ -42,7 +42,7 @@ jobs:
         run: |
           set -e
 
-          REPO="Red-A-Hawk/xxx-16"
+          REPO="Red-A-Hawk/xxx-17"
 
           echo "Creating repository:"
           echo "$REPO"
