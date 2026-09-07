@@ -1,0 +1,118 @@
+name: Create Independent hatan Repository
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-repository:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          repository: Red-A-Hawk/los_kernel_xiaomi_sm6150
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch all branches and tags
+        run: |
+          set -e
+
+          git fetch origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*'
+
+          echo "All source branches and tags fetched."
+
+      - name: Verify source repository
+        run: |
+          set -e
+
+          echo "Source repository:"
+          echo "Red-A-Hawk/los_kernel_xiaomi_sm6150"
+
+          echo
+          echo "Current commit:"
+          git rev-parse HEAD
+
+          echo
+          echo "Available branches:"
+          git for-each-ref \
+            --format='%(refname:short)' \
+            refs/remotes/origin/
+
+          echo
+          echo "Available tags:"
+          git tag -l
+
+      - name: Create independent repository
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          REPO="Red-A-Hawk/hatan"
+
+          if gh repo view "$REPO" &>/dev/null; then
+            echo "Repository $REPO already exists. Skipping creation."
+          else
+            echo "Creating repository:"
+            echo "$REPO"
+
+            gh repo create "$REPO" \
+              --public \
+              --source=. \
+              --remote=origin-new
+          fi
+
+          # تأكد من وجود الـ remote حتى لو الريبو كان موجود من قبل
+          if ! git remote get-url origin-new &>/dev/null; then
+            git remote add origin-new "https://github.com/${REPO}.git"
+          fi
+
+      - name: Push all branches and tags
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          REPO="Red-A-Hawk/hatan"
+
+          git remote set-url origin-new \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+
+          echo "Pushing all branches..."
+          git push origin-new \
+            'refs/remotes/origin/*:refs/heads/*'
+
+          echo "Pushing all tags..."
+          git push origin-new \
+            'refs/tags/*:refs/tags/*'
+
+          echo
+          echo "All branches and tags pushed successfully."
+
+      - name: Verify new repository
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          REPO="Red-A-Hawk/hatan"
+
+          echo
+          echo "Repository created successfully:"
+
+          gh repo view "$REPO" \
+            --json nameWithOwner,url \
+            -q '.nameWithOwner + " | " + .url'
+
+          echo
+          echo "Branches in new repository:"
+          git ls-remote --heads origin-new
+
+          echo
+          echo "Tags in new repository:"
+          git ls-remote --tags origin-new
