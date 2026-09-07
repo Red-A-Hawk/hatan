@@ -8,6 +8,10 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
+      # ============================================================
+      # 1. CHECKOUT SOURCE REPOSITORY
+      # ============================================================
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -15,23 +19,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # ============================================================
+      # 2. VERIFY SOURCE REPOSITORY
+      # ============================================================
       - name: Verify source repository
         run: |
           set -e
 
-          REPO="Red-A-Hawk/los_kernel_xiaomi_sm6150"
-
           echo "Source repository:"
-          echo "$REPO"
+          echo "Red-A-Hawk/los_kernel_xiaomi_sm6150"
 
           echo
           echo "Current commit:"
           git rev-parse HEAD
 
           echo
-          echo "Remote branches:"
+          echo "Available branches:"
           git branch -r
 
+      # ============================================================
+      # 3. CREATE INDEPENDENT REPOSITORY
+      # ============================================================
       - name: Create independent repository
         env:
           GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
@@ -48,15 +56,44 @@ jobs:
             --source=. \
             --remote=origin-new
 
-          echo
+      # ============================================================
+      # 4. PUSH ALL BRANCHES
+      # ============================================================
+      - name: Push all branches
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          REPO="Red-A-Hawk/xxx-20"
+
+          git remote set-url origin-new \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+
           echo "Pushing all branches..."
 
           git push origin-new --all
 
           echo
-          echo "Repository created successfully:"
-          gh repo view "$REPO" --json nameWithOwner,url -q '.nameWithOwner + " | " + .url'
+          echo "All branches pushed successfully."
+
+      # ============================================================
+      # 5. VERIFY NEW REPOSITORY
+      # ============================================================
+      - name: Verify new repository
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          REPO="Red-A-Hawk/xxx-20"
 
           echo
-          echo "Branches pushed:"
+          echo "Repository:"
+          gh repo view "$REPO" \
+            --json nameWithOwner,url \
+            -q '.nameWithOwner + " | " + .url'
+
+          echo
+          echo "Branches in new repository:"
           git ls-remote --heads origin-new
