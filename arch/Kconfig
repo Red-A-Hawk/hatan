@@ -687,6 +687,15 @@ config POLLY_CLANG
 
 	  If unsure, say N.
 
+config POLLY_DCE
+	bool "Enable Polly dead code elimination"
+	depends on POLLY_CLANG
+	help
+	  This option enables Polly dead code elimination for loops
+	  optimized by Polly.
+
+	  If unsure, say N.
+
 config CFI
 	bool
 
