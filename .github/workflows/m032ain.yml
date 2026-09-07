@@ -1,0 +1,617 @@
+name: Analyze OpenELA 4.14 Backport Candidates
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT TARGET KERNEL
+      # ============================================================
+      - name: Checkout Kernel branch 16
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 0
+          persist-credentials: false
+
+      # ============================================================
+      # 2. FETCH OPENELA 4.14.y
+      # ============================================================
+      - name: Fetch OpenELA linux-4.14.y
+        run: |
+          set -euo pipefail
+
+          git remote add openela https://github.com/openela/kernel-lts.git
+
+          git fetch \
+            --no-tags \
+            --prune \
+            openela \
+            linux-4.14.y
+
+      # ============================================================
+      # 3. ANALYZE OPENELA COMMITS
+      # ============================================================
+      - name: Analyze and generate patches
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUT="$GITHUB_WORKSPACE/openela-4.14-analysis"
+          PATCH_DIR="$OUT/candidates"
+
+          rm -rf "$OUT"
+          mkdir -p "$PATCH_DIR"
+
+          REPORT="$OUT/report.md"
+          CANDIDATES="$OUT/candidates.txt"
+          PRESENT="$OUT/already-present.txt"
+          SKIPPED="$OUT/skipped.txt"
+
+          TARGET="HEAD"
+          OPENELA="openela/linux-4.14.y"
+
+          # --------------------------------------------------------
+          # TARGET KERNEL VERSION
+          # --------------------------------------------------------
+
+          VERSION=$(awk '$1=="VERSION" {print $3; exit}' Makefile)
+          PATCHLEVEL=$(awk '$1=="PATCHLEVEL" {print $3; exit}' Makefile)
+          SUBLEVEL=$(awk '$1=="SUBLEVEL" {print $3; exit}' Makefile)
+
+          TARGET_VERSION="${VERSION}.${PATCHLEVEL}.${SUBLEVEL}"
+
+          echo "Target kernel: $TARGET_VERSION"
+
+          # --------------------------------------------------------
+          # BASIC VALIDATION
+          # --------------------------------------------------------
+
+          if [ "$VERSION" != "4" ] || [ "$PATCHLEVEL" != "14" ]; then
+            echo "ERROR: Target kernel is not Linux 4.14"
+            echo "Detected: $TARGET_VERSION"
+            exit 1
+          fi
+
+          # --------------------------------------------------------
+          # OUTPUT HEADERS
+          # --------------------------------------------------------
+
+          cat > "$REPORT" <<EOF
+          # OpenELA Linux 4.14 Backport Analysis
+
+          ## Target
+
+          - Repository: Red-A-Hawk/los_kernel_xiaomi_sm6150
+          - Branch: 16
+          - Kernel version: $TARGET_VERSION
+
+          ## Source
+
+          - OpenELA repository: openela/kernel-lts
+          - Branch: linux-4.14.y
+
+          ## Method
+
+          This workflow performs a read-only comparison.
+
+          It does NOT:
+          - cherry-pick commits
+          - modify kernel source
+          - push anything
+          - reset branch 16
+          - create commits
+
+          Each selected candidate is exported as an individual patch.
+
+          Patch numbering follows OpenELA chronological order:
+          oldest candidate -> newest candidate.
+
+          ## Status
+
+          EOF
+
+          echo "# OpenELA candidates" > "$CANDIDATES"
+          echo "# Commits already present/equivalent in target" > "$PRESENT"
+          echo "# Skipped commits" > "$SKIPPED"
+
+          # --------------------------------------------------------
+          # FIND COMMON HISTORY
+          # --------------------------------------------------------
+
+          MERGE_BASE=""
+
+          if git merge-base "$TARGET" "$OPENELA" >/dev/null 2>&1; then
+            MERGE_BASE=$(git merge-base "$TARGET" "$OPENELA")
+          fi
+
+          if [ -n "$MERGE_BASE" ]; then
+            echo "Common ancestor: $MERGE_BASE"
+          else
+            echo "WARNING: No common ancestor detected."
+          fi
+
+          # --------------------------------------------------------
+          # FIND OPENELA BASELINE
+          # --------------------------------------------------------
+
+          BASE_COMMIT=""
+
+          if git log "$OPENELA" \
+              --format='%H%x09%s' \
+              --grep="^LTS: Update to ${TARGET_VERSION}$" \
+              -n 1 | grep -q .; then
+
+            BASE_COMMIT=$(git log "$OPENELA" \
+              --format='%H' \
+              --grep="^LTS: Update to ${TARGET_VERSION}$" \
+              -n 1)
+          fi
+
+          # --------------------------------------------------------
+          # IF EXACT VERSION NOT FOUND:
+          # FIND CLOSEST OLDER LTS RELEASE
+          # --------------------------------------------------------
+
+          if [ -z "$BASE_COMMIT" ]; then
+
+            BASE_COMMIT=$(python3 - "$OPENELA" "$SUBLEVEL" <<'PY'
+          import subprocess
+          import re
+          import sys
+
+          ref = sys.argv[1]
+          target_sublevel = int(sys.argv[2])
+
+          out = subprocess.check_output(
+              ["git", "log", ref, "--format=%H%x09%s"],
+              text=True,
+              errors="replace"
+          )
+
+          best = None
+
+          for line in out.splitlines():
+              try:
+                  sha, subject = line.split("\t", 1)
+              except ValueError:
+                  continue
+
+              m = re.match(r"^LTS: Update to 4\.14\.(\d+)$", subject)
+
+              if not m:
+                  continue
+
+              level = int(m.group(1))
+
+              if level <= target_sublevel:
+                  if best is None or level > best[0]:
+                      best = (level, sha, subject)
+
+          if best:
+              print(best[1])
+          PY
+            )
+
+          fi
+
+          # --------------------------------------------------------
+          # SELECT COMMITS
+          # --------------------------------------------------------
+
+          if [ -n "$BASE_COMMIT" ]; then
+
+            echo "OpenELA baseline: $BASE_COMMIT"
+
+            mapfile -t OPENELA_COMMITS < <(
+              git rev-list \
+                --reverse \
+                --no-merges \
+                "${BASE_COMMIT}..${OPENELA}"
+            )
+
+          else
+
+            echo "No suitable LTS baseline found."
+            echo "Using complete OpenELA non-merge history."
+
+            mapfile -t OPENELA_COMMITS < <(
+              git rev-list \
+                --reverse \
+                --no-merges \
+                "$OPENELA"
+            )
+
+          fi
+
+          TOTAL=${#OPENELA_COMMITS[@]}
+
+          echo "Commits to analyze: $TOTAL"
+
+          # --------------------------------------------------------
+          # BUILD PATCH-EQUIVALENCE MAP
+          #
+          # git cherry is used when the histories have a common base.
+          # This detects equivalent patches even when SHA differs.
+          # --------------------------------------------------------
+
+          declare -A PRESENT_MAP
+
+          if [ -n "$MERGE_BASE" ]; then
+
+            while IFS=$'\t' read -r STATUS SHA SUBJECT; do
+
+              [ -z "${SHA:-}" ] && continue
+
+              if [ "$STATUS" = "-" ]; then
+                PRESENT_MAP["$SHA"]=1
+              fi
+
+            done < <(
+              git cherry -v "$TARGET" "$OPENELA" 2>/dev/null || true
+            )
+
+          fi
+
+          # --------------------------------------------------------
+          # PROCESS COMMITS
+          # --------------------------------------------------------
+
+          PATCH_NUMBER=0
+          ANALYZED=0
+          ALREADY=0
+          SKIPPED_COUNT=0
+          CANDIDATE_COUNT=0
+          CLEAN_COUNT=0
+          CONFLICT_COUNT=0
+
+          for SHA in "${OPENELA_COMMITS[@]}"; do
+
+            ANALYZED=$((ANALYZED + 1))
+
+            SUBJECT=$(git show \
+              -s \
+              --format='%s' \
+              "$SHA")
+
+            AUTHOR=$(git show \
+              -s \
+              --format='%an <%ae>' \
+              "$SHA")
+
+            DATE=$(git show \
+              -s \
+              --format='%ad' \
+              --date=iso-strict \
+              "$SHA")
+
+            # ------------------------------------------------------
+            # SKIP RELEASE UPDATE COMMITS
+            # ------------------------------------------------------
+
+            if echo "$SUBJECT" | grep -Eq \
+              '^(LTS: Update to|Linux 4\.14\.[0-9]+|Linux-4\.14\.[0-9]+)'; then
+
+              echo "$SHA | $DATE | RELEASE | $SUBJECT" >> "$SKIPPED"
+
+              SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+
+              continue
+            fi
+
+            # ------------------------------------------------------
+            # ALREADY PRESENT
+            # ------------------------------------------------------
+
+            if [ "${PRESENT_MAP[$SHA]:-0}" = "1" ]; then
+
+              echo "$SHA | $DATE | ALREADY PRESENT | $SUBJECT" >> "$PRESENT"
+
+              ALREADY=$((ALREADY + 1))
+
+              continue
+            fi
+
+            # ------------------------------------------------------
+            # FILE LIST
+            # ------------------------------------------------------
+
+            FILES=$(git diff-tree \
+              --no-commit-id \
+              --name-only \
+              -r \
+              "$SHA" | sort)
+
+            FILE_COUNT=$(printf '%s\n' "$FILES" | sed '/^$/d' | wc -l)
+
+            # ------------------------------------------------------
+            # SUBSYSTEM DETECTION
+            # ------------------------------------------------------
+
+            SUBSYSTEM="OTHER"
+
+            while IFS= read -r FILE; do
+
+              case "$FILE" in
+                arch/*)
+                  SUBSYSTEM="ARCH"
+                  break
+                  ;;
+                drivers/*)
+                  SUBSYSTEM="DRIVERS"
+                  break
+                  ;;
+                fs/*)
+                  SUBSYSTEM="FS"
+                  break
+                  ;;
+                mm/*)
+                  SUBSYSTEM="MM"
+                  break
+                  ;;
+                kernel/*)
+                  SUBSYSTEM="KERNEL"
+                  break
+                  ;;
+                net/*)
+                  SUBSYSTEM="NET"
+                  break
+                  ;;
+                security/*)
+                  SUBSYSTEM="SECURITY"
+                  break
+                  ;;
+                block/*)
+                  SUBSYSTEM="BLOCK"
+                  break
+                  ;;
+                ipc/*)
+                  SUBSYSTEM="IPC"
+                  break
+                  ;;
+                lib/*)
+                  SUBSYSTEM="LIB"
+                  break
+                  ;;
+                include/*)
+                  SUBSYSTEM="INCLUDE"
+                  break
+                  ;;
+                scripts/*)
+                  SUBSYSTEM="SCRIPTS"
+                  break
+                  ;;
+              esac
+
+            done <<< "$FILES"
+
+            # ------------------------------------------------------
+            # PATCH NUMBER
+            # ------------------------------------------------------
+
+            PATCH_NUMBER=$((PATCH_NUMBER + 1))
+
+            NUM=$(printf '%04d' "$PATCH_NUMBER")
+
+            SAFE_SUBJECT=$(echo "$SUBJECT" \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed \
+                -e 's/[^a-z0-9._-]/-/g' \
+                -e 's/-\+/-/g' \
+                -e 's/^-//' \
+                -e 's/-$//' \
+              | cut -c1-100)
+
+            PATCH_FILE="$PATCH_DIR/${NUM}-${SAFE_SUBJECT}.patch"
+
+            # ------------------------------------------------------
+            # EXPORT ORIGINAL OPENELA PATCH
+            # ------------------------------------------------------
+
+            git format-patch \
+              --stdout \
+              --full-index \
+              --binary \
+              -1 "$SHA" > "$PATCH_FILE"
+
+            # ------------------------------------------------------
+            # TEST TEXTUAL APPLY
+            #
+            # IMPORTANT:
+            # git apply --check does NOT modify the source tree.
+            # ------------------------------------------------------
+
+            APPLY_STATUS="CONFLICT"
+
+            if git apply \
+                --check \
+                --whitespace=nowarn \
+                "$PATCH_FILE" >/dev/null 2>&1; then
+
+              APPLY_STATUS="CLEAN_APPLY"
+              CLEAN_COUNT=$((CLEAN_COUNT + 1))
+
+            else
+
+              CONFLICT_COUNT=$((CONFLICT_COUNT + 1))
+
+            fi
+
+            # ------------------------------------------------------
+            # CHECK MISSING PATHS
+            # ------------------------------------------------------
+
+            MISSING_FILES=""
+
+            while IFS= read -r FILE; do
+
+              [ -z "$FILE" ] && continue
+
+              if [ ! -e "$FILE" ]; then
+                MISSING_FILES="${MISSING_FILES}${FILE}"$'\n'
+              fi
+
+            done <<< "$FILES"
+
+            if [ -n "$MISSING_FILES" ]; then
+              PATH_STATUS="PATH_MISSING"
+            else
+              PATH_STATUS="PATH_OK"
+            fi
+
+            # ------------------------------------------------------
+            # CANDIDATE
+            # ------------------------------------------------------
+
+            CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
+
+            echo "$NUM | $SHA | $DATE | $SUBSYSTEM | $APPLY_STATUS | $PATH_STATUS | $SUBJECT" \
+              >> "$CANDIDATES"
+
+            # ------------------------------------------------------
+            # REPORT ENTRY
+            # ------------------------------------------------------
+
+            {
+              echo ""
+              echo "### $NUM — $SUBJECT"
+              echo ""
+              echo "- **Commit:** \`$SHA\`"
+              echo "- **Date:** $DATE"
+              echo "- **Author:** $AUTHOR"
+              echo "- **Subsystem:** $SUBSYSTEM"
+              echo "- **Files:** $FILE_COUNT"
+              echo "- **Apply check:** $APPLY_STATUS"
+              echo "- **Path check:** $PATH_STATUS"
+              echo "- **Patch:** \`candidates/$(basename "$PATCH_FILE")\`"
+              echo ""
+              echo "**Files changed:**"
+              echo ""
+              echo '```text'
+              echo "$FILES"
+              echo '```'
+              echo ""
+
+              if [ -n "$MISSING_FILES" ]; then
+                echo "**Files missing from target:**"
+                echo ""
+                echo '```text'
+                echo "$MISSING_FILES"
+                echo '```'
+                echo ""
+              fi
+
+              echo "---"
+
+            } >> "$REPORT"
+
+          done
+
+          # --------------------------------------------------------
+          # SUMMARY
+          # --------------------------------------------------------
+
+          TMP=$(mktemp)
+
+          {
+            echo ""
+            echo "# Summary"
+            echo ""
+            echo "| Metric | Count |"
+            echo "|---|---:|"
+            echo "| OpenELA commits analyzed | $ANALYZED |"
+            echo "| Candidates | $CANDIDATE_COUNT |"
+            echo "| Already present/equivalent | $ALREADY |"
+            echo "| Skipped release commits | $SKIPPED_COUNT |"
+            echo "| Clean textual apply | $CLEAN_COUNT |"
+            echo "| Conflicting patches | $CONFLICT_COUNT |"
+            echo ""
+            echo "## Important"
+            echo ""
+            echo "CLEAN_APPLY means the patch applies textually with \`git apply --check\`."
+            echo "It does NOT prove that the change is semantically correct for the Xiaomi/vendor kernel."
+            echo ""
+            echo "Patches must be reviewed before being applied."
+            echo ""
+          } > "$TMP"
+
+          cat "$TMP" "$REPORT" > "$OUT/report.tmp"
+          mv "$OUT/report.tmp" "$REPORT"
+
+          rm -f "$TMP"
+
+          # --------------------------------------------------------
+          # METADATA
+          # --------------------------------------------------------
+
+          cat > "$OUT/metadata.txt" <<EOF
+          Target repository: Red-A-Hawk/los_kernel_xiaomi_sm6150
+          Target branch: 16
+          Target kernel: $TARGET_VERSION
+
+          OpenELA repository: https://github.com/openela/kernel-lts
+          OpenELA branch: linux-4.14.y
+
+          OpenELA baseline commit:
+          ${BASE_COMMIT:-NOT FOUND}
+
+          OpenELA tip:
+          $(git rev-parse "$OPENELA")
+
+          Common ancestor:
+          ${MERGE_BASE:-NONE}
+
+          Analysis order:
+          OLDEST -> NEWEST
+
+          Source tree modified:
+          NO
+
+          Cherry-pick performed:
+          NO
+
+          Push performed:
+          NO
+          EOF
+
+          # --------------------------------------------------------
+          # FINAL DIRECTORY LIST
+          # --------------------------------------------------------
+
+          echo
+          echo "============================================================"
+          echo "OPENELA 4.14 ANALYSIS COMPLETE"
+          echo "============================================================"
+          echo
+          echo "Target:       $TARGET_VERSION"
+          echo "Analyzed:     $ANALYZED"
+          echo "Candidates:   $CANDIDATE_COUNT"
+          echo "Already:      $ALREADY"
+          echo "Skipped:      $SKIPPED_COUNT"
+          echo "Clean apply:  $CLEAN_COUNT"
+          echo "Conflicts:    $CONFLICT_COUNT"
+          echo
+          echo "Patches:"
+          find "$PATCH_DIR" -maxdepth 1 -type f -name '*.patch' \
+            -printf '%f\n' | sort
+          echo
+
+      # ============================================================
+      # 4. UPLOAD REPORT + EVERY PATCH
+      # ============================================================
+      - name: Upload OpenELA analysis artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openela-4.14-analysis
+          path: openela-4.14-analysis/
+          if-no-files-found: warn
+          compression-level: 6
