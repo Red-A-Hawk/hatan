@@ -1,0 +1,39 @@
+name: Create xxx-17 Branch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout c8ef5ed
+        uses: actions/checkout@v4
+        with:
+          ref: c8ef5ed11670b24fba8ea1f4823bc2f6d7727c1e
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source commit
+        run: |
+          set -e
+
+          COMMIT="c8ef5ed11670b24fba8ea1f4823bc2f6d7727c1e"
+
+          echo "Current commit:"
+          git rev-parse HEAD
+
+          test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Create and push new branch
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          git checkout -b xxx-17
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/los_kernel_xiaomi_sm6150.git"
+          git push origin xxx-17
+
+          echo "Branch 'xxx-17' created and pushed successfully."
