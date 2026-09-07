@@ -1,0 +1,1029 @@
+name: Test ARM64 Adaptive LTO + Polly + MLGO + DCE v8 (bear)
+
+"on":
+  workflow_dispatch:
+
+jobs:
+  build-pgo:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+      - name: Checkout Kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. INSTALL DEPENDENCIES
+      # ============================================================
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            make \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            device-tree-compiler \
+            binutils-aarch64-linux-gnu \
+            openjdk-17-jdk \
+            bear
+
+      # ============================================================
+      # 3. DOWNLOAD TOOLCHAINS
+      # ============================================================
+      - name: Download Toolchains
+        run: |
+          mkdir -p toolchains
+
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            toolchains/clang
+
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            toolchains/gcc64
+
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            toolchains/gcc32
+
+      # ============================================================
+      # 4. TOOLCHAIN VARIABLES
+      # ============================================================
+      - name: Setup Toolchain Environment
+        run: |
+          CLANG_PATH="$GITHUB_WORKSPACE/toolchains/clang"
+          GCC64_PATH="$GITHUB_WORKSPACE/toolchains/gcc64"
+          GCC32_PATH="$GITHUB_WORKSPACE/toolchains/gcc32"
+
+          CROSS_COMPILE="$GCC64_PATH/bin/aarch64-linux-android-"
+          CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-linux-androideabi-"
+          CLANG_TRIPLE="aarch64-linux-gnu-"
+
+          echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GCC64_PATH" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GCC32_PATH" >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=$CLANG_TRIPLE" >> "$GITHUB_ENV"
+
+          echo "$CLANG_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC64_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC32_PATH/bin" >> "$GITHUB_PATH"
+
+      # ============================================================
+      # 5. VERIFY TOOLCHAINS
+      # ============================================================
+      - name: Verify Toolchains
+        run: |
+          set -e
+
+          echo "=== Clang ==="
+          clang --version
+
+          echo
+          echo "=== LLVM Tools ==="
+
+          command -v clang
+          command -v ld.lld
+          command -v llvm-ar
+          command -v llvm-nm
+          command -v llvm-objcopy
+          command -v llvm-objdump
+          command -v llvm-readelf
+
+          echo
+          echo "=== GCC64 ==="
+          aarch64-linux-android-gcc --version
+
+          echo
+          echo "=== GCC32 ==="
+          arm-linux-androideabi-gcc --version
+
+          echo
+          echo "=== Bear ==="
+          bear --version
+
+      # ============================================================
+      # 6. CHECK ORIGINAL DEFCONFIG
+      # ============================================================
+      - name: Check Original Defconfig
+        run: |
+          echo "=== vendor/violet-perf_defconfig ==="
+
+          grep -E \
+            "CONFIG_LTO|CONFIG_THINLTO|CONFIG_LTO_NONE|CONFIG_POLLY_CLANG|CONFIG_MLGO_CLANG|CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+            vendor/violet-perf_defconfig || true
+
+      # ============================================================
+      # 7. GENERATE KERNEL CONFIG
+      # ============================================================
+      - name: Generate Kernel Config
+        run: |
+          set -e
+
+          make \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vendor/violet-perf_defconfig
+
+      # ============================================================
+      # 8. DETECT CONFIGURATION
+      # ============================================================
+      - name: Detect Kernel Configuration
+        run: |
+          set -e
+
+          CONFIG="arm64-test/.config"
+
+          echo "============================================================"
+          echo "DETECTED KERNEL CONFIGURATION"
+          echo "============================================================"
+
+          echo
+          echo "=== LTO CONFIG ==="
+
+          if grep -q "^CONFIG_LTO=y$" "$CONFIG"; then
+            echo "[OK] CONFIG_LTO=y"
+          else
+            echo "[INFO] CONFIG_LTO is not enabled"
+          fi
+
+          if grep -q "^CONFIG_LTO_CLANG=y$" "$CONFIG"; then
+            echo "[OK] CONFIG_LTO_CLANG=y"
+          else
+            echo "[INFO] CONFIG_LTO_CLANG is not enabled"
+          fi
+
+          if grep -q "^CONFIG_THINLTO=y$" "$CONFIG"; then
+            echo "[OK] CONFIG_THINLTO=y"
+            echo "LTO_MODE=ThinLTO" >> "$GITHUB_ENV"
+          elif grep -q "^CONFIG_LTO=y$" "$CONFIG" && \
+               grep -q "^CONFIG_LTO_CLANG=y$" "$CONFIG"; then
+            echo "[OK] Full LTO configuration detected"
+            echo "[OK] CONFIG_THINLTO is not set"
+            echo "LTO_MODE=FullLTO" >> "$GITHUB_ENV"
+          else
+            echo "[INFO] LTO mode could not be determined"
+            echo "LTO_MODE=OFF" >> "$GITHUB_ENV"
+          fi
+
+          if grep -q "^CONFIG_LTO_NONE=y$" "$CONFIG"; then
+            echo "[INFO] CONFIG_LTO_NONE=y"
+          else
+            echo "[INFO] CONFIG_LTO_NONE is not set"
+          fi
+
+          echo
+          echo "=== POLLY ==="
+
+          if grep -q "^CONFIG_POLLY_CLANG=y$" "$CONFIG"; then
+            echo "[OK] CONFIG_POLLY_CLANG=y"
+            echo "POLLY_MODE=ON" >> "$GITHUB_ENV"
+          else
+            echo "[INFO] CONFIG_POLLY_CLANG is not set"
+            echo "POLLY_MODE=OFF" >> "$GITHUB_ENV"
+          fi
+
+          echo
+          echo "=== MLGO ==="
+
+          if grep -q "^CONFIG_MLGO_CLANG=y$" "$CONFIG"; then
+            echo "[OK] CONFIG_MLGO_CLANG=y"
+            echo "MLGO_MODE=ON" >> "$GITHUB_ENV"
+          else
+            echo "[INFO] CONFIG_MLGO_CLANG is not set"
+            echo "MLGO_MODE=OFF" >> "$GITHUB_ENV"
+          fi
+
+          echo
+          echo "=== DCE ==="
+
+          if grep -q "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" "$CONFIG"; then
+            echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+            echo "DCE_MODE=ON" >> "$GITHUB_ENV"
+          else
+            echo "[INFO] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set"
+            echo "DCE_MODE=OFF" >> "$GITHUB_ENV"
+          fi
+
+          echo
+          echo "=== SUMMARY ==="
+          echo "LTO:  ${LTO_MODE:-unknown}"
+          echo "Polly: ${POLLY_MODE:-unknown}"
+          echo "MLGO: ${MLGO_MODE:-unknown}"
+          echo "DCE:  ${DCE_MODE:-unknown}"
+
+      # ============================================================
+      # 9. TEST MLGO COMPILER SUPPORT
+      # ============================================================
+      - name: Test MLGO Compiler Support
+        run: |
+          set -e
+
+          if grep -q "^CONFIG_MLGO_CLANG=y$" arm64-test/.config; then
+
+            cat > /tmp/mlgo-test.c <<'EOF'
+          int test_function(int a, int b)
+          {
+              return a + b;
+          }
+          EOF
+
+            clang \
+              -target aarch64-linux-gnu \
+              -O2 \
+              -mllvm -regalloc-enable-advisor=release \
+              -c /tmp/mlgo-test.c \
+              -o /tmp/mlgo-test.o
+
+            echo "[OK] MLGO compiler flag accepted"
+
+          else
+
+            echo "[INFO] MLGO disabled in defconfig"
+            echo "[INFO] Skipping MLGO compiler support test"
+
+          fi
+
+      # ============================================================
+      # 10. OLDDEFCONFIG
+      # ============================================================
+      - name: Olddefconfig
+        run: |
+          set -e
+
+          make \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            olddefconfig
+
+      # ============================================================
+      # 11. VERIFY FINAL CONFIGURATION
+      # ============================================================
+      - name: Verify Final Configuration
+        run: |
+          set -e
+
+          CONFIG="arm64-test/.config"
+
+          echo "============================================================"
+          echo "FINAL CONFIGURATION"
+          echo "============================================================"
+
+          echo
+          echo "=== LTO ==="
+
+          grep -E \
+            "^CONFIG_LTO=|^CONFIG_LTO_CLANG=|^CONFIG_THINLTO=|^CONFIG_LTO_NONE=|^# CONFIG_LTO_NONE" \
+            "$CONFIG" || true
+
+          echo
+          echo "=== POLLY ==="
+
+          grep "^CONFIG_POLLY_CLANG=" "$CONFIG" || \
+            echo "[INFO] CONFIG_POLLY_CLANG is not set"
+
+          echo
+          echo "=== MLGO ==="
+
+          grep "^CONFIG_MLGO_CLANG=" "$CONFIG" || \
+            echo "[INFO] CONFIG_MLGO_CLANG is not set"
+
+          echo
+          echo "=== DCE ==="
+
+          grep "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" "$CONFIG" || \
+            echo "[INFO] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set"
+
+          echo
+          echo "=== DETECTED MODES ==="
+
+          if grep -q "^CONFIG_THINLTO=y$" "$CONFIG"; then
+            echo "[OK] LTO mode: ThinLTO"
+          elif grep -q "^CONFIG_LTO=y$" "$CONFIG" && \
+               grep -q "^CONFIG_LTO_CLANG=y$" "$CONFIG"; then
+            echo "[OK] LTO mode: Full LTO"
+          else
+            echo "[INFO] LTO mode: OFF/UNKNOWN"
+          fi
+
+          if grep -q "^CONFIG_POLLY_CLANG=y$" "$CONFIG"; then
+            echo "[OK] Polly: ON"
+          else
+            echo "[INFO] Polly: OFF"
+          fi
+
+          if grep -q "^CONFIG_MLGO_CLANG=y$" "$CONFIG"; then
+            echo "[OK] MLGO: ON"
+          else
+            echo "[INFO] MLGO: OFF"
+          fi
+
+          if grep -q "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" "$CONFIG"; then
+            echo "[OK] DCE: ON"
+          else
+            echo "[INFO] DCE: OFF"
+          fi
+
+      # ============================================================
+      # 12. PREPARE
+      # ============================================================
+      - name: Prepare Kernel
+        run: |
+          set -e
+
+          make \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            prepare
+
+      # ============================================================
+      # 13. MODULES PREPARE
+      # ============================================================
+      - name: Modules Prepare
+        run: |
+          set -e
+
+          make \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            modules_prepare
+
+      # ============================================================
+      # 14. VERIFY AUTO.CONF
+      # ============================================================
+      - name: Verify Auto Config
+        run: |
+          set -e
+
+          test -f arm64-test/include/config/auto.conf
+
+          echo "[OK] auto.conf generated"
+
+          echo
+          echo "=== AUTO CONFIG STATE ==="
+
+          grep -E \
+            "^CONFIG_LTO=|^CONFIG_LTO_CLANG=|^CONFIG_THINLTO=|^CONFIG_POLLY_CLANG=|^CONFIG_MLGO_CLANG=|^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            arm64-test/.config || true
+
+      # ============================================================
+      # 15. REAL VMLINUX BUILD
+      # ============================================================
+      - name: Build VMLINUX - Adaptive LTO + Polly + MLGO + DCE
+        run: |
+          set -o pipefail
+
+          START_TIME=$(date +%s)
+
+          echo "============================================================"
+          echo "BUILD START"
+          echo "============================================================"
+
+          echo
+          echo "=== Detected Build Configuration ==="
+          echo "LTO:   ${LTO_MODE:-unknown}"
+          echo "Polly: ${POLLY_MODE:-unknown}"
+          echo "MLGO:  ${MLGO_MODE:-unknown}"
+          echo "DCE:   ${DCE_MODE:-unknown}"
+
+          echo
+          echo "=== Initial Resources ==="
+          free -h
+
+          echo
+          echo "=== Initial Swap ==="
+          swapon --show || true
+
+          echo
+          echo "=== Initial PSI ==="
+          cat /proc/pressure/cpu || true
+          cat /proc/pressure/io || true
+          cat /proc/pressure/memory || true
+
+          echo
+          echo "=== Starting Resource Monitor ==="
+
+          (
+            while true; do
+
+              {
+                echo
+                echo "============================================================"
+                echo "RESOURCE CHECK $(date)"
+                echo "============================================================"
+
+                free -h
+
+                echo
+                echo "--- Swap ---"
+                swapon --show || true
+
+                echo
+                echo "--- Memory PSI ---"
+                cat /proc/pressure/memory || true
+
+                echo
+                echo "--- CPU PSI ---"
+                cat /proc/pressure/cpu || true
+
+                echo
+                echo "--- IO PSI ---"
+                cat /proc/pressure/io || true
+
+                echo
+                echo "--- OOM / SIGTERM ---"
+                dmesg 2>/dev/null | \
+                  grep -Ei \
+                  "out of memory|oom-killer|killed process|sigterm|memory cgroup" \
+                  | tail -n 20 || true
+
+              } >> resource-monitor.log
+
+              sleep 30
+
+            done
+          ) &
+
+          MONITOR_PID=$!
+
+          set +e
+
+          bear --output arm64-test/compile_commands.json -- \
+          make \
+            O=arm64-test \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vmlinux \
+            > lto-polly-mlgo-vmlinux-build.log 2>&1
+
+          STATUS=$?
+
+          set -e
+
+          kill "$MONITOR_PID" 2>/dev/null || true
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo
+          echo "============================================================"
+          echo "BUILD RESULT"
+          echo "============================================================"
+
+          echo "Build exit status: $STATUS"
+          echo "Build duration: ${DURATION} seconds"
+
+          echo
+          echo "=== Final Resources ==="
+          free -h
+
+          echo
+          echo "=== Final Swap ==="
+          swapon --show || true
+
+          echo
+          echo "=== Final PSI ==="
+          cat /proc/pressure/memory || true
+          cat /proc/pressure/cpu || true
+          cat /proc/pressure/io || true
+
+          echo
+          echo "=== OOM / SIGTERM CHECK ==="
+
+          if dmesg 2>/dev/null | \
+            grep -Ei \
+            "out of memory|oom-killer|killed process|sigterm|memory cgroup"; then
+
+            echo "[WARNING] Possible OOM/SIGTERM event detected"
+
+          else
+
+            echo "[OK] No OOM/SIGTERM event detected in dmesg"
+
+          fi
+
+          echo
+          echo "=== Build Log ==="
+          echo "Full build output saved to:"
+          echo "lto-polly-mlgo-vmlinux-build.log"
+
+          echo
+          echo "=== compile_commands ==="
+
+          if [ -f arm64-test/compile_commands.json ]; then
+            wc -l arm64-test/compile_commands.json
+          fi
+
+          exit "$STATUS"
+
+      # ============================================================
+      # 16. VERIFY LTO FLAGS
+      # ============================================================
+      - name: Verify LTO Flags
+        run: |
+          set -e
+
+          test -f arm64-test/compile_commands.json
+
+          echo "=== LTO FLAGS ==="
+
+          if grep -q -- "-flto=thin" \
+            arm64-test/compile_commands.json; then
+
+            if grep -Eq '(^|[[:space:]"]) -flto([[:space:]"]|$)' \
+              arm64-test/compile_commands.json; then
+
+              echo "[WARNING] Full LTO pattern also appeared"
+
+            fi
+
+            echo "[OK] ThinLTO flag detected: -flto=thin"
+
+          elif grep -Eq '(^|[[:space:]"]) -flto([[:space:]"]|$)' \
+            arm64-test/compile_commands.json; then
+
+            echo "[OK] Full LTO flag detected: -flto"
+
+          else
+
+            echo "[INFO] No LTO compiler flag detected"
+
+          fi
+
+          echo
+          echo "=== LTO VISIBILITY ==="
+
+          if grep -q -- "-fvisibility=default" \
+            arm64-test/compile_commands.json; then
+
+            echo "[OK] -fvisibility=default"
+
+          else
+
+            echo "[INFO] -fvisibility=default not detected"
+
+          fi
+
+          echo
+          echo "=== SPLIT LTO UNIT ==="
+
+          if grep -q -- "-fsplit-lto-unit" \
+            arm64-test/compile_commands.json; then
+
+            echo "[OK] -fsplit-lto-unit"
+
+          else
+
+            echo "[INFO] -fsplit-lto-unit not present"
+            echo "[INFO] This flag is optional through cc-option"
+
+          fi
+
+          echo
+          echo "=== LINKER LTO FLAGS ==="
+
+          if grep -q -- "-import-instr-limit=5" \
+            lto-polly-mlgo-vmlinux-build.log; then
+
+            echo "[OK] -mllvm -import-instr-limit=5"
+
+          else
+
+            echo "[INFO] -mllvm -import-instr-limit=5 not visible in build log"
+
+          fi
+
+          if grep -q -- "--thinlto-cache-dir=.thinlto-cache" \
+            lto-polly-mlgo-vmlinux-build.log; then
+
+            echo "[OK] --thinlto-cache-dir=.thinlto-cache"
+
+          else
+
+            echo "[INFO] --thinlto-cache-dir=.thinlto-cache not visible in build log"
+            echo "[INFO] This flag is only expected for ThinLTO"
+
+          fi
+
+      # ============================================================
+      # 17. VERIFY MLGO FLAG
+      # ============================================================
+      - name: Verify MLGO Flag
+        run: |
+          set -e
+
+          echo "=== MLGO ==="
+
+          if grep -q "^CONFIG_MLGO_CLANG=y$" \
+            arm64-test/.config; then
+
+            if grep -q -- "-regalloc-enable-advisor=release" \
+              arm64-test/compile_commands.json; then
+
+              echo "[OK] -regalloc-enable-advisor=release"
+
+            else
+
+              echo "[FAIL] MLGO enabled but compiler flag not found"
+              exit 1
+
+            fi
+
+          else
+
+            echo "[INFO] MLGO disabled"
+            echo "[INFO] Skipping MLGO flag verification"
+
+          fi
+
+      # ============================================================
+      # 18. VERIFY POLLY + DCE FLAGS
+      # ============================================================
+      - name: Verify Polly + DCE Flags
+        run: |
+          set -e
+
+          echo "=== POLLY ==="
+
+          if grep -q "^CONFIG_POLLY_CLANG=y$" \
+            arm64-test/.config; then
+
+            POLLY_FLAGS=(
+              "-polly"
+              "-polly-ast-use-context"
+              "-polly-invariant-load-hoisting"
+              "-polly-run-inliner"
+              "-polly-vectorizer=stripmine"
+            )
+
+            for flag in "${POLLY_FLAGS[@]}"; do
+
+              if grep -q -- "$flag" \
+                arm64-test/compile_commands.json; then
+
+                echo "[OK] $flag"
+
+              else
+
+                echo "[FAIL] $flag not found"
+                exit 1
+
+              fi
+
+            done
+
+            echo
+            echo "=== POLLY FUSION ==="
+
+            if grep -q -- "-polly-loopfusion-greedy" \
+              arm64-test/compile_commands.json; then
+
+              echo "[OK] -polly-loopfusion-greedy"
+
+            elif grep -q -- "-polly-opt-fusion=max" \
+              arm64-test/compile_commands.json; then
+
+              echo "[OK] -polly-opt-fusion=max"
+
+            else
+
+              echo "[FAIL] No supported Polly fusion flag found"
+              exit 1
+
+            fi
+
+          else
+
+            echo "[INFO] Polly disabled"
+            echo "[INFO] Skipping Polly flag verification"
+
+          fi
+
+          echo
+          echo "=== DCE ==="
+
+          if grep -q "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" \
+            arm64-test/.config; then
+
+            echo "[OK] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+
+            echo
+            echo "=== DCE COMPILER FLAGS ==="
+
+            if grep -q -- "-ffunction-sections" \
+              arm64-test/compile_commands.json; then
+
+              echo "[OK] -ffunction-sections"
+
+            else
+
+              echo "[FAIL] -ffunction-sections not found"
+              exit 1
+
+            fi
+
+            if grep -q -- "-fdata-sections" \
+              arm64-test/compile_commands.json; then
+
+              echo "[OK] -fdata-sections"
+
+            else
+
+              echo "[FAIL] -fdata-sections not found"
+              exit 1
+
+            fi
+
+            echo
+            echo "=== POLLY DCE ==="
+
+            if grep -q -- "-polly-run-dce" \
+              arm64-test/compile_commands.json; then
+
+              echo "[OK] -polly-run-dce"
+
+            else
+
+              echo "[INFO] -polly-run-dce not found"
+              echo "[INFO] This may be unavailable when Polly is disabled"
+
+            fi
+
+            echo
+            echo "=== LINKER DCE ==="
+
+            if grep -q -- "--gc-sections" \
+              lto-polly-mlgo-vmlinux-build.log; then
+
+              echo "[OK] --gc-sections"
+
+            else
+
+              echo "[INFO] --gc-sections not visible in build log"
+
+            fi
+
+          else
+
+            echo "[INFO] DCE disabled"
+            echo "[INFO] Skipping DCE flag verification"
+
+          fi
+
+      # ============================================================
+      # 19. VERIFY VMLINUX
+      # ============================================================
+      - name: Verify VMLINUX
+        run: |
+          set -e
+
+          test -f arm64-test/vmlinux
+
+          ls -lh arm64-test/vmlinux
+
+          file arm64-test/vmlinux
+
+          echo "[OK] vmlinux exists"
+
+      # ============================================================
+      # 20. FINAL RESULT
+      # ============================================================
+      - name: Final Result
+        run: |
+          set -e
+
+          CONFIG="arm64-test/.config"
+
+          echo
+          echo "============================================================"
+          echo "FINAL CONFIGURATION"
+          echo "============================================================"
+
+          echo
+          echo "LTO:"
+
+          if grep -q "^CONFIG_THINLTO=y$" "$CONFIG"; then
+            echo "ThinLTO"
+          elif grep -q "^CONFIG_LTO=y$" "$CONFIG" && \
+               grep -q "^CONFIG_LTO_CLANG=y$" "$CONFIG"; then
+            echo "Full LTO"
+          else
+            echo "OFF / UNKNOWN"
+          fi
+
+          echo
+          echo "POLLY:"
+
+          if grep -q "^CONFIG_POLLY_CLANG=y$" "$CONFIG"; then
+            echo "ON"
+          else
+            echo "OFF"
+          fi
+
+          echo
+          echo "MLGO:"
+
+          if grep -q "^CONFIG_MLGO_CLANG=y$" "$CONFIG"; then
+            echo "ON"
+          else
+            echo "OFF"
+          fi
+
+          echo
+          echo "DCE:"
+
+          if grep -q "^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$" "$CONFIG"; then
+            echo "ON"
+          else
+            echo "OFF"
+          fi
+
+          echo
+          echo "=== CONFIG ==="
+
+          grep -E \
+            "^CONFIG_LTO=|^CONFIG_LTO_CLANG=|^CONFIG_THINLTO=|^CONFIG_LTO_NONE=|^CONFIG_POLLY_CLANG=|^CONFIG_MLGO_CLANG=|^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=" \
+            "$CONFIG" || true
+
+          echo
+          echo "=== LTO FLAGS ==="
+
+          grep -o -- '"-flto=thin"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          grep -o -- '"-fvisibility=default"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          grep -o -- '"-fsplit-lto-unit"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          echo
+          echo "=== LINKER FLAGS FROM FULL BUILD LOG ==="
+
+          grep -o -- --import-instr-limit=5 \
+            lto-polly-mlgo-vmlinux-build.log | head -n 1 || true
+
+          grep -o -- "--thinlto-cache-dir=.thinlto-cache" \
+            lto-polly-mlgo-vmlinux-build.log | head -n 1 || true
+
+          echo
+          echo "=== MLGO FLAG ==="
+
+          grep -o -- '"-regalloc-enable-advisor=release"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          echo
+          echo "=== POLLY FLAGS ==="
+
+          grep -o -- '"-polly[^"]*"' \
+            arm64-test/compile_commands.json | sort -u || true
+
+          echo
+          echo "=== DCE FLAGS ==="
+
+          grep -o -- '"-ffunction-sections"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          grep -o -- '"-fdata-sections"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          grep -o -- '"-polly-run-dce"' \
+            arm64-test/compile_commands.json | head -n 1 || true
+
+          grep -o -- --gc-sections \
+            lto-polly-mlgo-vmlinux-build.log | head -n 1 || true
+
+          echo
+          echo "=== VMLINUX ==="
+
+          ls -lh arm64-test/vmlinux
+
+          echo
+          echo "============================================================"
+          echo "[OK] VMLINUX BUILD SUCCESSFUL"
+          echo "============================================================"
+
+      # ============================================================
+      # 21. UPLOAD DIAGNOSTIC ARTIFACTS
+      # ============================================================
+      - name: Upload Diagnostic Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-lto-polly-mlgo-diagnostic-clang-r547379
+          path: |
+            lto-polly-mlgo-vmlinux-build.log
+            resource-monitor.log
+            arm64-test/.config
+            arm64-test/compile_commands.json
+            arm64-test/vmlinux
+          if-no-files-found: warn
+
+      # ============================================================
+      # 22. EXTRACT ERRORS
+      # ============================================================
+      - name: Extract Build Errors
+        if: failure()
+        run: |
+          echo "=== ERROR SEARCH ==="
+
+          if [ -f lto-polly-mlgo-vmlinux-build.log ]; then
+
+            grep -Ei \
+              "error:|fatal error:|undefined reference|undefined symbol|killed|terminated|signal|oom|out of memory" \
+              lto-polly-mlgo-vmlinux-build.log \
+              | tail -n 200 || true
+
+          fi
+
+      # ============================================================
+      # 23. UPLOAD FULL LOGS
+      # ============================================================
+      - name: Upload Full Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-lto-polly-mlgo-full-logs-clang-r547379
+          path: |
+            lto-polly-mlgo-vmlinux-build.log
+            resource-monitor.log
+            arm64-test/.config
+            arm64-test/compile_commands.json
+          if-no-files-found: warn
