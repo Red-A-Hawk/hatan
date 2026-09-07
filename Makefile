@@ -969,7 +969,7 @@ KBUILD_CFLAGS	+= $(POLLY_FUSION_FLAG)
 # can understand. This may negate the effect of the linker's DCE
 # so we tell Polly to perform proven DCE on the loops it optimises
 # in order to preserve the overall effect of the linker's DCE.
-ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
+ifdef CONFIG_POLLY_DCE
 KBUILD_CFLAGS	+= -mllvm -polly-run-dce
 endif
 endif
