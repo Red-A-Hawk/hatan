@@ -1,136 +1,158 @@
-name: Scan DCE References - xxx-17
+name: Scan DCE Patch Completeness - xxx-17
 
-on:
+"on":
   workflow_dispatch:
 
 jobs:
-  scan-dce:
-    runs-on: ubuntu-24.04
+  scan-dce-patch-completeness:
+    runs-on: ubuntu-latest
 
     steps:
 
-      # ============================================================
-      # 1. CHECKOUT xxx-17
-      # ============================================================
-      - name: Checkout Kernel
-        uses: actions/checkout@v4
-        with:
-          ref: xxx-17
-          fetch-depth: 1
+    # ============================================================
+    # 1. CHECKOUT
+    # ============================================================
+    - name: Checkout Kernel
+      uses: actions/checkout@v4
+      with:
+        ref: xxx-17
+        fetch-depth: 1
 
-      # ============================================================
-      # 2. SCAN DCE
-      # ============================================================
-      - name: Scan All DCE References
-        shell: bash
-        run: |
-          set -uo pipefail
+    # ============================================================
+    # 2. FULL PATCH COMPLETENESS SCAN
+    # ============================================================
+    - name: DCE Patch Completeness Scan
+      run: |
+        set -uo pipefail
 
-          echo "============================================================"
-          echo "DCE COMPLETE SOURCE SCAN"
-          echo "============================================================"
-          echo "Branch: xxx-17"
-          echo
+        echo "============================================================"
+        echo "DCE PATCH COMPLETENESS SCAN"
+        echo "============================================================"
+        echo "Branch: xxx-17"
 
-          echo "============================================================"
-          echo "1. CONFIG_LD_DEAD_CODE_DATA_ELIMINATION"
-          echo "============================================================"
+        FAIL=0
 
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            'CONFIG_LD_DEAD_CODE_DATA_ELIMINATION' . \
-            || echo "[NOT FOUND]"
+        # ------------------------------------------------------------
+        # 8. select LD_DEAD_CODE_DATA_ELIMINATION in arch/arm64/Kconfig
+        # ------------------------------------------------------------
+        echo
+        echo "============================================================"
+        echo "8. arch/arm64/Kconfig - select LD_DEAD_CODE_DATA_ELIMINATION"
+        echo "============================================================"
 
-          echo
+        if [ -f arch/arm64/Kconfig ]; then
 
-          echo "============================================================"
-          echo "2. DEAD CODE REFERENCES"
-          echo "============================================================"
+          if grep -n "select[[:space:]]\+LD_DEAD_CODE_DATA_ELIMINATION" arch/arm64/Kconfig; then
+            echo "[OK] select LD_DEAD_CODE_DATA_ELIMINATION found in arch/arm64/Kconfig"
+          else
+            echo "[MISSING] select LD_DEAD_CODE_DATA_ELIMINATION NOT found in arch/arm64/Kconfig"
+            echo "[MISSING] Without this, CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y has no effect"
+            echo "[MISSING] on arm64, since LD_DEAD_CODE_DATA_ELIMINATION is a promptless bool"
+            echo "[MISSING] in arch/Kconfig and must be selected by an architecture."
+            FAIL=1
+          fi
 
-          grep -RIniE \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            'dead[[:space:]_-]*code' . \
-            || echo "[NOT FOUND]"
+        else
+          echo "[ERROR] arch/arm64/Kconfig not found"
+          FAIL=1
+        fi
 
-          echo
+        # ------------------------------------------------------------
+        # 9. KEEP() protections in arch/arm64/kernel/vmlinux.lds.S
+        # ------------------------------------------------------------
+        echo
+        echo "============================================================"
+        echo "9. arch/arm64/kernel/vmlinux.lds.S - KEEP() protections"
+        echo "============================================================"
 
-          echo "============================================================"
-          echo "3. LINKER GC-SECTIONS"
-          echo "============================================================"
+        LDS=arch/arm64/kernel/vmlinux.lds.S
 
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            -- '--gc-sections' . \
-            || echo "[NOT FOUND]"
+        if [ ! -f "$LDS" ]; then
+          echo "[ERROR] $LDS not found"
+          FAIL=1
+        else
 
-          echo
+          declare -A CHECKS=(
+            ["__kvm_ex_table"]='KEEP\(\*\(__kvm_ex_table\)\)'
+            [".hyp.idmap.text"]='KEEP\(\*\(\.hyp\.idmap\.text\)\)'
+            [".hyp.text"]='KEEP\(\*\(\.hyp\.text\)\)'
+            [".idmap.text"]='KEEP\(\*\(\.idmap\.text\)\)'
+            [".hibernate_exit.text"]='KEEP\(\*\(\.hibernate_exit\.text\)\)'
+            [".exception.text"]='KEEP\(\*\(\.exception\.text\)\)'
+            [".entry.tramp.text (pre-existing)"]='KEEP\(\*\(\.entry\.tramp\.text\)\)'
+            [".init.data.* merge"]='\*\(\.init\.data\.\*\)'
+            [".altinstr_replacement"]='KEEP\(\*\(\.altinstr_replacement\)\)'
+            [".mmuoff.data.write"]='KEEP\(\*\(\.mmuoff\.data\.write\)\)'
+            [".mmuoff.data.read"]='KEEP\(\*\(\.mmuoff\.data\.read\)\)'
+          )
 
-          echo "============================================================"
-          echo "4. FUNCTION SECTIONS"
-          echo "============================================================"
+          for label in "${!CHECKS[@]}"; do
+            pattern="${CHECKS[$label]}"
 
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            -- '-ffunction-sections' . \
-            || echo "[NOT FOUND]"
+            if grep -nE "$pattern" "$LDS" > /tmp/match.txt; then
+              echo "[OK] $label"
+              sed 's/^/       /' /tmp/match.txt
+            else
+              echo "[MISSING] $label -- pattern not found: $pattern"
+              if [ "$label" != ".entry.tramp.text (pre-existing)" ]; then
+                FAIL=1
+              fi
+            fi
+            echo
+          done
 
-          echo
+        fi
 
-          echo "============================================================"
-          echo "5. DATA SECTIONS"
-          echo "============================================================"
+        # ------------------------------------------------------------
+        # 10. --gc-sections (root Makefile, already confirmed present)
+        # ------------------------------------------------------------
+        echo "============================================================"
+        echo "10. Makefile - --gc-sections (sanity re-check)"
+        echo "============================================================"
 
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            -- '-fdata-sections' . \
-            || echo "[NOT FOUND]"
+        if grep -n "gc-sections" Makefile; then
+          echo "[OK] --gc-sections found in root Makefile"
+        else
+          echo "[MISSING] --gc-sections NOT found in root Makefile"
+          FAIL=1
+        fi
 
-          echo
+        # ------------------------------------------------------------
+        # 11. Current defconfig state (informational only)
+        # ------------------------------------------------------------
+        echo
+        echo "============================================================"
+        echo "11. Current defconfig state (informational)"
+        echo "============================================================"
 
-          echo "============================================================"
-          echo "6. POLLY DCE"
-          echo "============================================================"
+        grep -n "CONFIG_LD_DEAD_CODE_DATA_ELIMINATION" \
+          arch/arm64/configs/vendor/violet-perf_defconfig || \
+          echo "[INFO] CONFIG_LD_DEAD_CODE_DATA_ELIMINATION not present in defconfig"
 
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            'polly-run-dce' . \
-            || echo "[NOT FOUND]"
+        grep -n "CONFIG_POLLY_DCE" \
+          arch/arm64/configs/vendor/violet-perf_defconfig || \
+          echo "[INFO] CONFIG_POLLY_DCE not present in defconfig"
 
-          echo
+        # ------------------------------------------------------------
+        # FINAL VERDICT
+        # ------------------------------------------------------------
+        echo
+        echo "============================================================"
+        echo "FINAL VERDICT"
+        echo "============================================================"
 
-          echo "============================================================"
-          echo "7. DCE-RELATED SOURCE FILES"
-          echo "============================================================"
+        if [ "$FAIL" -eq 0 ]; then
+          echo "[OK] All required DCE-safety patch pieces are present."
+          echo "[OK] Enabling CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y should be"
+          echo "[OK] safe with respect to the checks this scan performs."
+        else
+          echo "[FAIL] One or more required patch pieces are MISSING."
+          echo "[FAIL] Do NOT enable CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y"
+          echo "[FAIL] until the missing items above are applied."
+        fi
 
-          grep -RIlE \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            --exclude='*.a' \
-            'CONFIG_LD_DEAD_CODE_DATA_ELIMINATION|dead[[:space:]_-]*code|--gc-sections|-ffunction-sections|-fdata-sections|polly-run-dce' . \
-            | sort \
-            || echo "[NO FILES FOUND]"
+        echo "============================================================"
+        echo "SCAN COMPLETE"
+        echo "============================================================"
 
-          echo
-
-          echo "============================================================"
-          echo "SCAN COMPLETE"
-          echo "============================================================"
+        exit "$FAIL"
