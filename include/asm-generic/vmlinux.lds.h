@@ -634,8 +634,7 @@
 #define INIT_TEXT							\
 	*(.init.text .init.text.*)					\
 	*(.text.startup)						\
-	MEM_DISCARD(init.text)
-
+    MEM_DISCARD(init.text*)
 #define EXIT_DATA							\
 	*(.exit.data)							\
 	*(.fini_array)							\
