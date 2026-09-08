@@ -39,6 +39,34 @@ jobs:
         fetch-depth: 1
         path: k
 
+    # ============================================================
+    # 1.5. Setup 16GB Swap
+    # ============================================================
+
+    - name: Setup 16GB Swap
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "SETTING UP 16GB SWAP"
+        echo "========================================"
+
+        sudo swapoff -a || true
+        sudo rm -f /swapfile
+
+        sudo fallocate -l 16G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+
+        echo
+        echo "========================================"
+        echo "SWAP STATUS"
+        echo "========================================"
+
+        free -h
+        swapon --show
+
 
     # ============================================================
     # 2. Dependencies
