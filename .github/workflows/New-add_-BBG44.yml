@@ -1,19 +1,19 @@
 name: Build Kernel (violet)
 
 on:
-push:
-branches:
-- xxx-17
-workflow_dispatch:
+  push:
+    branches:
+      - xxx-17
+  workflow_dispatch:
 
 jobs:
-build:
+  build:
 
-runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
 
-defaults:
-  run:
-    working-directory: k
+    defaults:
+      run:
+        working-directory: k
 
 strategy:
   fail-fast: false
