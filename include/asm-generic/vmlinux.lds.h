@@ -790,7 +790,7 @@
 #define NOTES								\
 	.notes : AT(ADDR(.notes) - LOAD_OFFSET) {			\
 		VMLINUX_SYMBOL(__start_notes) = .;			\
-		*(.note.*)						\
+        KEEP(*(.note.*))					\
 		VMLINUX_SYMBOL(__stop_notes) = .;			\
 	}
 
