@@ -191,7 +191,7 @@ jobs:
           LLVM_IAS=1 \
           CC=clang \
           LD=ld.lld \
-          -pn 2>/dev/null \
+          -pn \
           > out/make-vars.txt
 
         if grep -E -- \
