@@ -1,784 +1,784 @@
 name: Inspect Clang r547379
 
 on:
-workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-inspect-clang:
-runs-on: ubuntu-24.04
-
-steps:
-
-  # ============================================================
-  # 1. CHECKOUT CLANG PREBUILT
-  # ============================================================
-
-  - name: Checkout Clang r547379
-    run: |
-      set -e
-
-      git clone \
-        --depth=1 \
-        https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
-        clang-r547379
-
-  # ============================================================
-  # 2. BASIC REPOSITORY INFORMATION
-  # ============================================================
-
-  - name: Repository Information
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "REPOSITORY INFORMATION"
-        echo "========================================"
-        echo
-
-        echo "Remote:"
-        git remote -v || true
-        echo
-
-        echo "Commit:"
-        git rev-parse HEAD || true
-        echo
-
-        echo "Commit Date:"
-        git show -s --format='%ci' HEAD || true
-        echo
-
-        echo "Commit Subject:"
-        git show -s --format='%s' HEAD || true
-        echo
-
-        echo "Branch:"
-        git branch --show-current || true
-        echo
-
-        echo "Tags:"
-        git tag --points-at HEAD || true
-        echo
-
-        echo "Git Status:"
-        git status --short --branch || true
-
-      } | tee ../repository-info.txt
-
-  # ============================================================
-  # 3. BUILD METADATA
-  # ============================================================
-
-  - name: Extract Build Metadata
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "BUILD METADATA"
-        echo "========================================"
-        echo
-
-        echo "----- BUILD_INFO -----"
-        if [ -f BUILD_INFO ]; then
-          cat BUILD_INFO
-        else
-          echo "BUILD_INFO: NOT FOUND"
-        fi
-
-        echo
-        echo "----- AndroidVersion.txt -----"
-        if [ -f AndroidVersion.txt ]; then
-          cat AndroidVersion.txt
-        else
-          echo "AndroidVersion.txt: NOT FOUND"
-        fi
-
-        echo
-        echo "----- clang_source_info.md -----"
-        if [ -f clang_source_info.md ]; then
-          cat clang_source_info.md
-        else
-          echo "clang_source_info.md: NOT FOUND"
-        fi
-
-        echo
-        echo "----- MANIFEST -----"
-        find . -maxdepth 1 -type f -name 'manifest_*.xml' -print -exec cat {} \; || true
-
-      } | tee ../build-metadata.txt
-
-  # ============================================================
-  # 4. COMPLETE FILE TREE
-  # ============================================================
-
-  - name: Complete File Inventory
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "COMPLETE FILE INVENTORY"
-        echo "========================================"
-
-        find . -type f -printf '%p\t%k KB\n' | sort
-
-        echo
-        echo "========================================"
-        echo "SYMLINKS"
-        echo "========================================"
-
-        find . -type l -printf '%p -> %l\n' | sort
-
-        echo
-        echo "========================================"
-        echo "DIRECTORIES"
-        echo "========================================"
-
-        find . -type d | sort
-
-      } | tee ../file-inventory.txt
-
-  # ============================================================
-  # 5. CLANG / LLVM VERSION INFORMATION
-  # ============================================================
-
-  - name: Clang LLVM Version Information
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "CLANG / LLVM VERSION INFORMATION"
-        echo "========================================"
-
-        echo
-        echo "----- clang -----"
-        if [ -x bin/clang ]; then
-          ./bin/clang --version || true
-        fi
-
-        echo
-        echo "----- clang++ -----"
-        if [ -x bin/clang++ ]; then
-          ./bin/clang++ --version || true
-        fi
-
-        echo
-        echo "----- clang-cpp -----"
-        if [ -x bin/clang-cpp ]; then
-          ./bin/clang-cpp --version || true
-        fi
-
-        echo
-        echo "----- ld.lld -----"
-        if [ -x bin/ld.lld ]; then
-          ./bin/ld.lld --version || true
-        fi
-
-        echo
-        echo "----- lld -----"
-        if [ -x bin/lld ]; then
-          ./bin/lld --version || true
-        fi
-
-        echo
-        echo "----- llvm-config -----"
-        if [ -x bin/llvm-config ]; then
-          ./bin/llvm-config --version || true
-          ./bin/llvm-config --host-target || true
-          ./bin/llvm-config --targets-built || true
-        fi
-
-      } | tee ../compiler-version.txt
-
-  # ============================================================
-  # 6. ALL LLVM / CLANG BINARIES
-  # ============================================================
-
-  - name: Inspect All LLVM Clang Binaries
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "LLVM / CLANG BINARIES"
-        echo "========================================"
-
-        find bin -maxdepth 1 -type f -executable -printf '%f\n' | sort
-
-        echo
-        echo "========================================"
-        echo "BINARY DETAILS"
-        echo "========================================"
-
-        while IFS= read -r file; do
-          echo
-          echo "----------------------------------------"
-          echo "$file"
-          echo "----------------------------------------"
-
-          file "$file" || true
-          ls -lh "$file" || true
-
-        done < <(find bin -maxdepth 1 -type f -executable | sort)
-
-      } | tee ../binaries.txt
-
-  # ============================================================
-  # 7. TARGET INFORMATION
-  # ============================================================
-
-  - name: Target Information
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "TARGET INFORMATION"
-        echo "========================================"
-
-        if [ -x bin/clang ]; then
-
-          echo
-          echo "----- Default Target -----"
-          bin/clang -print-target-triple || true
-
-          echo
-          echo "----- Version -----"
-          bin/clang --version || true
-
-          echo
-          echo "----- Target Help -----"
-          bin/clang --print-supported-cpus 2>/dev/null || true
-
-        fi
-
-        if [ -x bin/llvm-config ]; then
-
-          echo
-          echo "----- LLVM Targets Built -----"
-          bin/llvm-config --targets-built || true
-
-          echo
-          echo "----- Host Target -----"
-          bin/llvm-config --host-target || true
-
-        fi
-
-      } | tee ../targets.txt
-
-  # ============================================================
-  # 8. POLLY DETECTION
-  # ============================================================
-
-  - name: Inspect Polly
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "POLLY INSPECTION"
-        echo "========================================"
-
-        echo
-        echo "----- Polly Files -----"
-        find . \
-          -iname '*polly*' -o -iname '*isl*' \
-          -print | sort || true
-
-        echo
-        echo "----- Polly In Clang Help -----"
-        bin/clang --help-hidden 2>/dev/null \
-          | grep -iE 'polly|isl' || true
-
-        echo
-        echo "----- Polly In Clang Strings -----"
-        strings bin/clang 2>/dev/null \
-          | grep -iE 'polly|isl' \
-          | sort -u || true
-
-        echo
-        echo "----- Polly In LLVM Libraries -----"
-        find lib libexec -type f 2>/dev/null \
-          | grep -iE 'polly|isl' \
-          | sort || true
-
-      } | tee ../polly.txt
-
-  # ============================================================
-  # 9. MLGO FILE DETECTION
-  # ============================================================
-
-  - name: Inspect MLGO Files
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "MLGO FILE INSPECTION"
-        echo "========================================"
-
-        echo
-        echo "----- MLGO Named Files -----"
-        find . \
-          -iname '*mlgo*' \
-          -o -iname '*mlregalloc*' \
-          -o -iname '*regalloc*evict*' \
-          -o -iname '*ml-inlin*' \
-          \
-          -print | sort || true
-
-        echo
-        echo "----- MLGO Models -----"
-        find . -type f \
-          -iname '*.tflite' \
-          -o -iname '*.pb' \
-          -o -iname '*.pbtxt' \
-          -o -iname '*.json' \
-          -o -iname '*.model' \
-          -o -iname '*.bin' \
-          \
-          | grep -iE 'mlgo|regalloc|inlin|model' \
-          | sort || true
-
-        echo
-        echo "----- MLGO Directories -----"
-        find . -type d \
-          | grep -iE 'mlgo|model|regalloc|inlin' \
-          | sort || true
-
-      } | tee ../mlgo-files.txt
-
-  # ============================================================
-  # 10. MLGO FLAGS
-  # ============================================================
-
-  - name: Inspect MLGO Flags
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "MLGO FLAGS"
-        echo "========================================"
-
-        echo
-        echo "----- clang --help-hidden -----"
-
-        bin/clang --help-hidden 2>/dev/null \
-          | grep -iE \
-          'mlgo|ml-inliner|regalloc-evict|evict-advisor|mlregalloc' \
-          || true
-
-        echo
-        echo "----- clang -mllvm help -----"
-
-        printf '' \
-          | bin/clang -x c - -c -o /dev/null \
-              -mllvm --help-hidden 2>&1 \
-          | grep -iE \
-              'mlgo|ml-inliner|regalloc-evict|evict-advisor|mlregalloc' \
-          || true
-
-      } | tee ../mlgo-flags.txt
-
-  # ============================================================
-  # 11. MLGO STRINGS INSIDE BINARIES
-  # ============================================================
-
-  - name: Deep MLGO Binary Scan
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "DEEP MLGO BINARY SCAN"
-        echo "========================================"
-
-        find bin lib libexec -type f 2>/dev/null \
-          | while read -r file; do
-
-              if file "$file" 2>/dev/null | grep -qE \
-                'ELF|executable|shared object'; then
-
-                matches="$(
-                  strings "$file" 2>/dev/null \
-                    | grep -iE \
-                    'MLGO|MLRegalloc|MLInline|regalloc-evict|evict-advisor|ml-inliner|model.tflite|saved_model|policy_specs' \
-                    | sort -u \
-                    | head -n 500
-                )
-
-                if [ -n "$matches" ]; then
-                  echo
-                  echo "----------------------------------------"
-                  echo "$file"
-                  echo "----------------------------------------"
-                  echo "$matches"
-                fi
-
-              fi
-
-            done
-
-      } | tee ../mlgo-binary-scan.txt
-
-  # ============================================================
-  # 12. LTO / PGO / BOLT / MLGO FEATURES
-  # ============================================================
-
-  - name: Inspect Optimization Features
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "OPTIMIZATION FEATURE SCAN"
-        echo "========================================"
-
-        echo
-        echo "----- Clang Help -----"
-
-        bin/clang --help-hidden 2>/dev/null \
-          | grep -iE \
-          'lto|thinlto|pgo|profile|bolt|polly|mlgo|regalloc|inline|vectorize|loop' \
-          || true
-
-        echo
-        echo "----- Clang Strings -----"
-
-        strings bin/clang 2>/dev/null \
-          | grep -iE \
-          'lto|thinlto|pgo|profile|bolt|polly|mlgo|regalloc|inline|vectorize|loop' \
-          | sort -u \
-          | head -n 500 || true
-
-      } | tee ../optimization-features.txt
-
-  # ============================================================
-  # 13. LLVM LIBRARIES
-  # ============================================================
-
-  - name: Inspect LLVM Libraries
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "LLVM LIBRARIES"
-        echo "========================================"
-
-        find lib -type f -printf '%p\n' 2>/dev/null | sort
-
-        echo
-        echo "========================================"
-        echo "LLVM LIBRARY MLGO/POLLY MATCHES"
-        echo "========================================"
-
-        find lib -type f 2>/dev/null \
-          | grep -iE \
-          'mlgo|mlregalloc|regalloc|polly|isl|inline' \
-          | sort || true
-
-      } | tee ../llvm-libraries.txt
-
-  # ============================================================
-  # 14. PLUGINS
-  # ============================================================
-
-  - name: Inspect Plugins
-    working-directory: clang-r547379
-    run: |
-      set -e
-
-      {
-        echo "========================================"
-        echo "LLVM / CLANG PLUGINS"
-        echo "========================================"
-
-        find . -type f \
-          -name '*.so' -o -name '*.dylib' -o -name '*.dll' \
-          -print | sort
-
-        echo
-        echo "========================================"
-        echo "PLUGIN DETAILS"
-        echo "========================================"
-
-        find . -type f -name '*.so' -print0 2>/dev/null \
-          | while IFS= read -r -d '' file; do
+  inspect-clang:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT CLANG PREBUILT
+      # ============================================================
+
+      - name: Checkout Clang r547379
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang-r547379
+
+      # ============================================================
+      # 2. BASIC REPOSITORY INFORMATION
+      # ============================================================
+
+      - name: Repository Information
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "REPOSITORY INFORMATION"
+            echo "========================================"
+            echo
+
+            echo "Remote:"
+            git remote -v || true
+            echo
+
+            echo "Commit:"
+            git rev-parse HEAD || true
+            echo
+
+            echo "Commit Date:"
+            git show -s --format='%ci' HEAD || true
+            echo
+
+            echo "Commit Subject:"
+            git show -s --format='%s' HEAD || true
+            echo
+
+            echo "Branch:"
+            git branch --show-current || true
+            echo
+
+            echo "Tags:"
+            git tag --points-at HEAD || true
+            echo
+
+            echo "Git Status:"
+            git status --short --branch || true
+
+          } | tee ../repository-info.txt
+
+      # ============================================================
+      # 3. BUILD METADATA
+      # ============================================================
+
+      - name: Extract Build Metadata
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "BUILD METADATA"
+            echo "========================================"
+            echo
+
+            echo "----- BUILD_INFO -----"
+            if [ -f BUILD_INFO ]; then
+              cat BUILD_INFO
+            else
+              echo "BUILD_INFO: NOT FOUND"
+            fi
+
+            echo
+            echo "----- AndroidVersion.txt -----"
+            if [ -f AndroidVersion.txt ]; then
+              cat AndroidVersion.txt
+            else
+              echo "AndroidVersion.txt: NOT FOUND"
+            fi
+
+            echo
+            echo "----- clang_source_info.md -----"
+            if [ -f clang_source_info.md ]; then
+              cat clang_source_info.md
+            else
+              echo "clang_source_info.md: NOT FOUND"
+            fi
+
+            echo
+            echo "----- MANIFEST -----"
+            find . -maxdepth 1 -type f -name 'manifest_*.xml' -print -exec cat {} \; || true
+
+          } | tee ../build-metadata.txt
+
+      # ============================================================
+      # 4. COMPLETE FILE TREE
+      # ============================================================
+
+      - name: Complete File Inventory
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "COMPLETE FILE INVENTORY"
+            echo "========================================"
+
+            find . -type f -printf '%p\t%k KB\n' | sort
+
+            echo
+            echo "========================================"
+            echo "SYMLINKS"
+            echo "========================================"
+
+            find . -type l -printf '%p -> %l\n' | sort
+
+            echo
+            echo "========================================"
+            echo "DIRECTORIES"
+            echo "========================================"
+
+            find . -type d | sort
+
+          } | tee ../file-inventory.txt
+
+      # ============================================================
+      # 5. CLANG / LLVM VERSION INFORMATION
+      # ============================================================
+
+      - name: Clang LLVM Version Information
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "CLANG / LLVM VERSION INFORMATION"
+            echo "========================================"
+
+            echo
+            echo "----- clang -----"
+            if [ -x bin/clang ]; then
+              ./bin/clang --version || true
+            fi
+
+            echo
+            echo "----- clang++ -----"
+            if [ -x bin/clang++ ]; then
+              ./bin/clang++ --version || true
+            fi
+
+            echo
+            echo "----- clang-cpp -----"
+            if [ -x bin/clang-cpp ]; then
+              ./bin/clang-cpp --version || true
+            fi
+
+            echo
+            echo "----- ld.lld -----"
+            if [ -x bin/ld.lld ]; then
+              ./bin/ld.lld --version || true
+            fi
+
+            echo
+            echo "----- lld -----"
+            if [ -x bin/lld ]; then
+              ./bin/lld --version || true
+            fi
+
+            echo
+            echo "----- llvm-config -----"
+            if [ -x bin/llvm-config ]; then
+              ./bin/llvm-config --version || true
+              ./bin/llvm-config --host-target || true
+              ./bin/llvm-config --targets-built || true
+            fi
+
+          } | tee ../compiler-version.txt
+
+      # ============================================================
+      # 6. ALL LLVM / CLANG BINARIES
+      # ============================================================
+
+      - name: Inspect All LLVM Clang Binaries
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "LLVM / CLANG BINARIES"
+            echo "========================================"
+
+            find bin -maxdepth 1 -type f -executable -printf '%f\n' | sort
+
+            echo
+            echo "========================================"
+            echo "BINARY DETAILS"
+            echo "========================================"
+
+            while IFS= read -r file; do
               echo
               echo "----------------------------------------"
               echo "$file"
               echo "----------------------------------------"
+
               file "$file" || true
               ls -lh "$file" || true
-            done
 
-      } | tee ../plugins.txt
+            done < <(find bin -maxdepth 1 -type f -executable | sort)
 
-  # ============================================================
-  # 15. LLVM CONFIGURATION
-  # ============================================================
+          } | tee ../binaries.txt
 
-  - name: LLVM Configuration
-    working-directory: clang-r547379
-    run: |
-      set -e
+      # ============================================================
+      # 7. TARGET INFORMATION
+      # ============================================================
 
-      {
-        echo "========================================"
-        echo "LLVM CONFIGURATION"
-        echo "========================================"
+      - name: Target Information
+        working-directory: clang-r547379
+        run: |
+          set -e
 
-        if [ -x bin/llvm-config ]; then
-          echo
-          echo "Version:"
-          bin/llvm-config --version || true
+          {
+            echo "========================================"
+            echo "TARGET INFORMATION"
+            echo "========================================"
 
-          echo
-          echo "Targets:"
-          bin/llvm-config --targets-built || true
+            if [ -x bin/clang ]; then
 
-          echo
-          echo "Host:"
-          bin/llvm-config --host-target || true
+              echo
+              echo "----- Default Target -----"
+              bin/clang -print-target-triple || true
 
-          echo
-          echo "Build Mode:"
-          bin/llvm-config --build-mode || true
+              echo
+              echo "----- Version -----"
+              bin/clang --version || true
 
-          echo
-          echo "Bindir:"
-          bin/llvm-config --bindir || true
+              echo
+              echo "----- Target Help -----"
+              bin/clang --print-supported-cpus 2>/dev/null || true
 
-          echo
-          echo "Libdir:"
-          bin/llvm-config --libdir || true
+            fi
 
-          echo
-          echo "Includedir:"
-          bin/llvm-config --includedir || true
+            if [ -x bin/llvm-config ]; then
 
-          echo
-          echo "CXX Flags:"
-          bin/llvm-config --cxxflags || true
+              echo
+              echo "----- LLVM Targets Built -----"
+              bin/llvm-config --targets-built || true
 
-          echo
-          echo "System Libraries:"
-          bin/llvm-config --system-libs || true
+              echo
+              echo "----- Host Target -----"
+              bin/llvm-config --host-target || true
 
-        else
-          echo "llvm-config NOT FOUND"
-        fi
+            fi
 
-      } | tee ../llvm-config.txt
+          } | tee ../targets.txt
 
-  # ============================================================
-  # 16. CHECKSUMS
-  # ============================================================
+      # ============================================================
+      # 8. POLLY DETECTION
+      # ============================================================
 
-  - name: Generate SHA256 Checksums
-    working-directory: clang-r547379
-    run: |
-      set -e
+      - name: Inspect Polly
+        working-directory: clang-r547379
+        run: |
+          set -e
 
-      {
-        echo "========================================"
-        echo "SHA256 CHECKSUMS"
-        echo "========================================"
+          {
+            echo "========================================"
+            echo "POLLY INSPECTION"
+            echo "========================================"
 
-        find . -type f -print0 \
-          | sort -z \
-          | xargs -0 sha256sum
+            echo
+            echo "----- Polly Files -----"
+            find . \
+              \( -iname '*polly*' -o -iname '*isl*' \) \
+              -print | sort || true
 
-      } | tee ../sha256.txt
+            echo
+            echo "----- Polly In Clang Help -----"
+            bin/clang --help-hidden 2>/dev/null \
+              | grep -iE 'polly|isl' || true
 
-  # ============================================================
-  # 17. LARGE FILE ANALYSIS
-  # ============================================================
+            echo
+            echo "----- Polly In Clang Strings -----"
+            strings bin/clang 2>/dev/null \
+              | grep -iE 'polly|isl' \
+              | sort -u || true
 
-  - name: Largest Files
-    working-directory: clang-r547379
-    run: |
-      set -e
+            echo
+            echo "----- Polly In LLVM Libraries -----"
+            find lib libexec -type f 2>/dev/null \
+              | grep -iE 'polly|isl' \
+              | sort || true
 
-      {
-        echo "========================================"
-        echo "LARGEST FILES"
-        echo "========================================"
+          } | tee ../polly.txt
 
-        find . -type f -printf '%s\t%p\n' \
-          | sort -nr \
-          | head -n 200 \
-          | numfmt --field=1 --to=iec
+      # ============================================================
+      # 9. MLGO FILE DETECTION
+      # ============================================================
 
-      } | tee ../largest-files.txt
+      - name: Inspect MLGO Files
+        working-directory: clang-r547379
+        run: |
+          set -e
 
-  # ============================================================
-  # 18. ELF ANALYSIS
-  # ============================================================
+          {
+            echo "========================================"
+            echo "MLGO FILE INSPECTION"
+            echo "========================================"
 
-  - name: ELF Binary Analysis
-    working-directory: clang-r547379
-    run: |
-      set -e
+            echo
+            echo "----- MLGO Named Files -----"
+            find . \
+              \( -iname '*mlgo*' \
+              -o -iname '*mlregalloc*' \
+              -o -iname '*regalloc*evict*' \
+              -o -iname '*ml-inlin*' \
+              \) \
+              -print | sort || true
 
-      {
-        echo "========================================"
-        echo "ELF ANALYSIS"
-        echo "========================================"
+            echo
+            echo "----- MLGO Models -----"
+            find . -type f \
+              \( -iname '*.tflite' \
+              -o -iname '*.pb' \
+              -o -iname '*.pbtxt' \
+              -o -iname '*.json' \
+              -o -iname '*.model' \
+              -o -iname '*.bin' \
+              \) \
+              | grep -iE 'mlgo|regalloc|inlin|model' \
+              | sort || true
 
-        find bin lib libexec -type f 2>/dev/null \
-          | while read -r file; do
+            echo
+            echo "----- MLGO Directories -----"
+            find . -type d \
+              | grep -iE 'mlgo|model|regalloc|inlin' \
+              | sort || true
 
-              if file "$file" 2>/dev/null | grep -q ELF; then
+          } | tee ../mlgo-files.txt
 
-                echo
-                echo "----------------------------------------"
-                echo "$file"
-                echo "----------------------------------------"
+      # ============================================================
+      # 10. MLGO FLAGS
+      # ============================================================
 
-                file "$file" || true
-                readelf -h "$file" 2>/dev/null | \
-                  grep -E \
-                  'Class:|Data:|Machine:|Type:|Entry point' \
-                  || true
+      - name: Inspect MLGO Flags
+        working-directory: clang-r547379
+        run: |
+          set -e
 
-              fi
+          {
+            echo "========================================"
+            echo "MLGO FLAGS"
+            echo "========================================"
 
-            done
+            echo
+            echo "----- clang --help-hidden -----"
 
-      } | tee ../elf-analysis.txt
+            bin/clang --help-hidden 2>/dev/null \
+              | grep -iE \
+              'mlgo|ml-inliner|regalloc-evict|evict-advisor|mlregalloc' \
+              || true
 
-  # ============================================================
-  # 19. SEARCH ALL IMPORTANT KEYWORDS
-  # ============================================================
+            echo
+            echo "----- clang -mllvm help -----"
 
-  - name: Global Feature Search
-    working-directory: clang-r547379
-    run: |
-      set -e
+            printf '' \
+              | bin/clang -x c - -c -o /dev/null \
+                  -mllvm --help-hidden 2>&1 \
+              | grep -iE \
+                  'mlgo|ml-inliner|regalloc-evict|evict-advisor|mlregalloc' \
+              || true
 
-      {
-        echo "========================================"
-        echo "GLOBAL FEATURE SEARCH"
-        echo "========================================"
+          } | tee ../mlgo-flags.txt
 
-        echo
-        echo "===== MLGO ====="
-        grep -RInaE \
-          'MLGO|MLRegalloc|MLInline|regalloc-evict|evict-advisor|ml-inliner' \
-          . 2>/dev/null | head -n 2000 || true
+      # ============================================================
+      # 11. MLGO STRINGS INSIDE BINARIES
+      # ============================================================
 
-        echo
-        echo "===== POLLY ====="
-        grep -RInaE \
-          'Polly|polly|ISL' \
-          . 2>/dev/null | head -n 2000 || true
+      - name: Deep MLGO Binary Scan
+        working-directory: clang-r547379
+        run: |
+          set -e
 
-        echo
-        echo "===== PGO ====="
-        grep -RInaE \
-          'PGO|pgo|profile-guided|instrprof|sample-profile' \
-          . 2>/dev/null | head -n 2000 || true
+          {
+            echo "========================================"
+            echo "DEEP MLGO BINARY SCAN"
+            echo "========================================"
 
-        echo
-        echo "===== BOLT ====="
-        grep -RInaE \
-          'BOLT|bolt' \
-          . 2>/dev/null | head -n 2000 || true
+            find bin lib libexec -type f 2>/dev/null \
+              | while read -r file; do
 
-        echo
-        echo "===== LTO ====="
-        grep -RInaE \
-          'LTO|ThinLTO|thinlto' \
-          . 2>/dev/null | head -n 2000 || true
+                  if file "$file" 2>/dev/null | grep -qE \
+                    'ELF|executable|shared object'; then
 
-      } | tee ../global-feature-search.txt
+                    matches="$(
+                      strings "$file" 2>/dev/null \
+                        | grep -iE \
+                        'MLGO|MLRegalloc|MLInline|regalloc-evict|evict-advisor|ml-inliner|model.tflite|saved_model|policy_specs' \
+                        | sort -u \
+                        | head -n 500
+                    )"
 
-  # ============================================================
-  # 20. CREATE FINAL REPORT
-  # ============================================================
+                    if [ -n "$matches" ]; then
+                      echo
+                      echo "----------------------------------------"
+                      echo "$file"
+                      echo "----------------------------------------"
+                      echo "$matches"
+                    fi
 
-  - name: Create Final Report
-    run: |
-      set -e
+                  fi
 
-      {
-        echo "============================================================"
-        echo "CLANG r547379 FORENSIC REPORT"
-        echo "============================================================"
-        echo
-        echo "Repository:"
-        echo "https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379"
-        echo
-        echo "Generated:"
-        date -u
-        echo
-        echo "============================================================"
-        echo "FILES GENERATED"
-        echo "============================================================"
-        echo
-        ls -lh *.txt
-        echo
-        echo "============================================================"
-        echo "IMPORTANT MLGO RESULTS"
-        echo "============================================================"
-        echo
-        cat mlgo-files.txt
-        echo
-        cat mlgo-flags.txt
-        echo
-        cat mlgo-binary-scan.txt
-        echo
-        echo "============================================================"
-        echo "COMPILER VERSION"
-        echo "============================================================"
-        cat compiler-version.txt
-        echo
-        echo "============================================================"
-        echo "BUILD METADATA"
-        echo "============================================================"
-        cat build-metadata.txt
+                done
 
-      } | tee FINAL-REPORT.txt
+          } | tee ../mlgo-binary-scan.txt
 
-  # ============================================================
-  # 21. PACKAGE EVERYTHING
-  # ============================================================
+      # ============================================================
+      # 12. LTO / PGO / BOLT / MLGO FEATURES
+      # ============================================================
 
-  - name: Package Complete Report
-    run: |
-      set -e
+      - name: Inspect Optimization Features
+        working-directory: clang-r547379
+        run: |
+          set -e
 
-      mkdir -p clang-r547379-report
+          {
+            echo "========================================"
+            echo "OPTIMIZATION FEATURE SCAN"
+            echo "========================================"
 
-      cp *.txt clang-r547379-report/
+            echo
+            echo "----- Clang Help -----"
 
-      tar -czf clang-r547379-full-report.tar.gz \
-        clang-r547379-report
+            bin/clang --help-hidden 2>/dev/null \
+              | grep -iE \
+              'lto|thinlto|pgo|profile|bolt|polly|mlgo|regalloc|inline|vectorize|loop' \
+              || true
 
-  # ============================================================
-  # 22. UPLOAD REPORT
-  # ============================================================
+            echo
+            echo "----- Clang Strings -----"
 
-  - name: Upload Full Report
-    uses: actions/upload-artifact@v4
-    with:
-      name: clang-r547379-full-forensic-report
-      path: clang-r547379-full-report.tar.gz
-      retention-days: 30
+            strings bin/clang 2>/dev/null \
+              | grep -iE \
+              'lto|thinlto|pgo|profile|bolt|polly|mlgo|regalloc|inline|vectorize|loop' \
+              | sort -u \
+              | head -n 500 || true
+
+          } | tee ../optimization-features.txt
+
+      # ============================================================
+      # 13. LLVM LIBRARIES
+      # ============================================================
+
+      - name: Inspect LLVM Libraries
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "LLVM LIBRARIES"
+            echo "========================================"
+
+            find lib -type f -printf '%p\n' 2>/dev/null | sort
+
+            echo
+            echo "========================================"
+            echo "LLVM LIBRARY MLGO/POLLY MATCHES"
+            echo "========================================"
+
+            find lib -type f 2>/dev/null \
+              | grep -iE \
+              'mlgo|mlregalloc|regalloc|polly|isl|inline' \
+              | sort || true
+
+          } | tee ../llvm-libraries.txt
+
+      # ============================================================
+      # 14. PLUGINS
+      # ============================================================
+
+      - name: Inspect Plugins
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "LLVM / CLANG PLUGINS"
+            echo "========================================"
+
+            find . -type f \
+              \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) \
+              -print | sort
+
+            echo
+            echo "========================================"
+            echo "PLUGIN DETAILS"
+            echo "========================================"
+
+            find . -type f -name '*.so' -print0 2>/dev/null \
+              | while IFS= read -r -d '' file; do
+                  echo
+                  echo "----------------------------------------"
+                  echo "$file"
+                  echo "----------------------------------------"
+                  file "$file" || true
+                  ls -lh "$file" || true
+                done
+
+          } | tee ../plugins.txt
+
+      # ============================================================
+      # 15. LLVM CONFIGURATION
+      # ============================================================
+
+      - name: LLVM Configuration
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "LLVM CONFIGURATION"
+            echo "========================================"
+
+            if [ -x bin/llvm-config ]; then
+              echo
+              echo "Version:"
+              bin/llvm-config --version || true
+
+              echo
+              echo "Targets:"
+              bin/llvm-config --targets-built || true
+
+              echo
+              echo "Host:"
+              bin/llvm-config --host-target || true
+
+              echo
+              echo "Build Mode:"
+              bin/llvm-config --build-mode || true
+
+              echo
+              echo "Bindir:"
+              bin/llvm-config --bindir || true
+
+              echo
+              echo "Libdir:"
+              bin/llvm-config --libdir || true
+
+              echo
+              echo "Includedir:"
+              bin/llvm-config --includedir || true
+
+              echo
+              echo "CXX Flags:"
+              bin/llvm-config --cxxflags || true
+
+              echo
+              echo "System Libraries:"
+              bin/llvm-config --system-libs || true
+
+            else
+              echo "llvm-config NOT FOUND"
+            fi
+
+          } | tee ../llvm-config.txt
+
+      # ============================================================
+      # 16. CHECKSUMS
+      # ============================================================
+
+      - name: Generate SHA256 Checksums
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "SHA256 CHECKSUMS"
+            echo "========================================"
+
+            find . -type f -print0 \
+              | sort -z \
+              | xargs -0 sha256sum
+
+          } | tee ../sha256.txt
+
+      # ============================================================
+      # 17. LARGE FILE ANALYSIS
+      # ============================================================
+
+      - name: Largest Files
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "LARGEST FILES"
+            echo "========================================"
+
+            find . -type f -printf '%s\t%p\n' \
+              | sort -nr \
+              | head -n 200 \
+              | numfmt --field=1 --to=iec
+
+          } | tee ../largest-files.txt
+
+      # ============================================================
+      # 18. ELF ANALYSIS
+      # ============================================================
+
+      - name: ELF Binary Analysis
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "ELF ANALYSIS"
+            echo "========================================"
+
+            find bin lib libexec -type f 2>/dev/null \
+              | while read -r file; do
+
+                  if file "$file" 2>/dev/null | grep -q ELF; then
+
+                    echo
+                    echo "----------------------------------------"
+                    echo "$file"
+                    echo "----------------------------------------"
+
+                    file "$file" || true
+                    readelf -h "$file" 2>/dev/null | \
+                      grep -E \
+                      'Class:|Data:|Machine:|Type:|Entry point' \
+                      || true
+
+                  fi
+
+                done
+
+          } | tee ../elf-analysis.txt
+
+      # ============================================================
+      # 19. SEARCH ALL IMPORTANT KEYWORDS
+      # ============================================================
+
+      - name: Global Feature Search
+        working-directory: clang-r547379
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "GLOBAL FEATURE SEARCH"
+            echo "========================================"
+
+            echo
+            echo "===== MLGO ====="
+            grep -RInaE \
+              'MLGO|MLRegalloc|MLInline|regalloc-evict|evict-advisor|ml-inliner' \
+              . 2>/dev/null | head -n 2000 || true
+
+            echo
+            echo "===== POLLY ====="
+            grep -RInaE \
+              'Polly|polly|ISL' \
+              . 2>/dev/null | head -n 2000 || true
+
+            echo
+            echo "===== PGO ====="
+            grep -RInaE \
+              'PGO|pgo|profile-guided|instrprof|sample-profile' \
+              . 2>/dev/null | head -n 2000 || true
+
+            echo
+            echo "===== BOLT ====="
+            grep -RInaE \
+              'BOLT|bolt' \
+              . 2>/dev/null | head -n 2000 || true
+
+            echo
+            echo "===== LTO ====="
+            grep -RInaE \
+              'LTO|ThinLTO|thinlto' \
+              . 2>/dev/null | head -n 2000 || true
+
+          } | tee ../global-feature-search.txt
+
+      # ============================================================
+      # 20. CREATE FINAL REPORT
+      # ============================================================
+
+      - name: Create Final Report
+        run: |
+          set -e
+
+          {
+            echo "============================================================"
+            echo "CLANG r547379 FORENSIC REPORT"
+            echo "============================================================"
+            echo
+            echo "Repository:"
+            echo "https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379"
+            echo
+            echo "Generated:"
+            date -u
+            echo
+            echo "============================================================"
+            echo "FILES GENERATED"
+            echo "============================================================"
+            echo
+            ls -lh *.txt
+            echo
+            echo "============================================================"
+            echo "IMPORTANT MLGO RESULTS"
+            echo "============================================================"
+            echo
+            cat mlgo-files.txt
+            echo
+            cat mlgo-flags.txt
+            echo
+            cat mlgo-binary-scan.txt
+            echo
+            echo "============================================================"
+            echo "COMPILER VERSION"
+            echo "============================================================"
+            cat compiler-version.txt
+            echo
+            echo "============================================================"
+            echo "BUILD METADATA"
+            echo "============================================================"
+            cat build-metadata.txt
+
+          } | tee FINAL-REPORT.txt
+
+      # ============================================================
+      # 21. PACKAGE EVERYTHING
+      # ============================================================
+
+      - name: Package Complete Report
+        run: |
+          set -e
+
+          mkdir -p clang-r547379-report
+
+          cp *.txt clang-r547379-report/
+
+          tar -czf clang-r547379-full-report.tar.gz \
+            clang-r547379-report
+
+      # ============================================================
+      # 22. UPLOAD REPORT
+      # ============================================================
+
+      - name: Upload Full Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: clang-r547379-full-forensic-report
+          path: clang-r547379-full-report.tar.gz
+          retention-days: 30
