@@ -607,7 +607,7 @@ config CC_STACKPROTECTOR_STRONG
 
 endchoice
 
-config LD_DEAD_CODE_DATA_ELIMINATION
+config HAVE_LD_DEAD_CODE_DATA_ELIMINATION
 	bool
 	help
 	  Select this if the architecture wants to do dead code and
