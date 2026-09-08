@@ -298,8 +298,8 @@
 	VMLINUX_SYMBOL(__start_init_task) = .;				\
 	VMLINUX_SYMBOL(init_thread_union) = .;				\
 	VMLINUX_SYMBOL(init_stack) = .;					\
-	*(.data..init_task)						\
-	*(.data..init_thread_info)					\
+    KEEP(*(.data..init_task))					\
+    KEEP(*(.data..init_thread_info))				\
 	. = VMLINUX_SYMBOL(__start_init_task) + THREAD_SIZE;		\
 	VMLINUX_SYMBOL(__end_init_task) = .;
 
