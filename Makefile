@@ -954,18 +954,23 @@ KBUILD_CFLAGS	+= -mllvm -polly \
 		   -mllvm -polly-run-inliner \
 		   -mllvm -polly-vectorizer=stripmine
 
-# Select the preferred Polly fusion option supported by the selected Clang.
+# Polly fusion strategy.
+#
+# -polly-opt-fusion=max works ONLY with the OLD clang toolchain
+# (e.g. clang-r416183b). It was removed upstream in Polly 14.0.0,
+# so it does NOT work with newer toolchains (e.g. clang-r547379) --
+# cc-option will silently return empty for those and no fusion
+# flag is added, which is the safe fallback.
+#
+# -polly-loopfusion-greedy is intentionally NEVER used: it produced
+# a kernel that built successfully but hung at the boot logo
+# (bootloop), confirmed on both an older toolchain's greedy
+# implementation and a newer Polly's greedy implementation. Do not
+# re-enable it without a fresh on-device boot test.
 POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-opt-fusion=max)
-ifeq ($(POLLY_FUSION_FLAG),)
-POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-loopfusion-greedy)
-endif
-$(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag))
+$(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag (toolchain does not support -polly-opt-fusion)))
 KBUILD_CFLAGS	+= $(POLLY_FUSION_FLAG)
 
-# Polly may optimise loops with dead paths beyond what the linker
-# can understand. This may negate the effect of the linker's DCE
-# so we tell Polly to perform proven DCE on the loops it optimises
-# in order to preserve the overall effect of the linker's DCE.
 ifdef CONFIG_POLLY_DCE
 KBUILD_CFLAGS	+= -mllvm -polly-run-dce
 endif
