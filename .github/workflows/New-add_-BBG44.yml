@@ -910,46 +910,16 @@ jobs:
 
         monitor_resources() {
           while true; do
-            echo
-            echo "============================================================"
-            echo "RESOURCE STATUS - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "============================================================"
+            printf '[%s] ' "$(date '+%Y-%m-%d %H:%M:%S')"
 
-            echo
-            echo "--- RAM ---"
-            free -h
+            RAM=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
+            SWAP=$(free -h | awk '/^Swap:/ {print $3 "/" $2}')
+            CPU=$(top -b -n 1 | awk '/Cpu\(s\)/ {printf "%.0f%%", 100 - $8; exit}')
+            LLD=$(ps -eo rss,comm --sort=-rss | awk '$2 == "ld.lld" {printf "%.1fG RSS", $1/1024/1024; exit}')
 
-            echo
-            echo "--- SWAP ---"
-            swapon --show || true
+            [ -z "$LLD" ] && LLD="N/A"
 
-            echo
-            echo "--- CPU ---"
-            echo "CPU count: $(nproc --all)"
-            uptime
-            top -b -n 1 | head -20
-
-            echo
-            echo "--- TOP MEMORY PROCESSES ---"
-            ps -eo pid,ppid,%cpu,%mem,rss,vsz,stat,comm \
-              --sort=-%mem | head -15
-
-            echo
-            echo "--- OOM / OOM-KILL ---"
-            dmesg 2>/dev/null | \
-              grep -Ei 'out of memory|oom-kill|oom_reaper|killed process|memory cgroup' | \
-              tail -20 || true
-
-            echo
-            echo "--- SIGTERM / SIGKILL ---"
-            dmesg 2>/dev/null | \
-              grep -Ei 'sigterm|sigkill|terminated|killed process' | \
-              tail -20 || true
-
-            echo
-            echo "============================================================"
-            echo "NEXT RESOURCE CHECK IN 15 SECONDS"
-            echo "============================================================"
+            echo "RAM: $RAM | SWAP: $SWAP | CPU: $CPU | ld.lld: $LLD"
 
             sleep 15
           done
