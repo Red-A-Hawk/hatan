@@ -1,4 +1,4 @@
-name: Build Kernel LD DCE OFF
+name: Build Kernel LD DCE ON
 
 on:
   push:
@@ -159,8 +159,8 @@ jobs:
           ARCH=arm64 \
           olddefconfig
 
-    # 8 Verify LD DCE is disabled
-    - name: Verify LD DCE Disabled
+    # 8 Verify LD DCE is enabled
+    - name: Verify LD DCE Enabled
       run: |
         set -e
 
@@ -175,7 +175,7 @@ jobs:
 
         echo
         echo "LD DCE OPTION:"
-        grep '^# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set$' \
+        grep '^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=' \
           out/.config
 
         echo
@@ -188,14 +188,14 @@ jobs:
           out/.config
 
         grep -q \
-          '^# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set$' \
+          '^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$' \
           out/.config
 
         echo
         echo "[OK] HAVE_LD_DEAD_CODE_DATA_ELIMINATION=y"
-        echo "[OK] LD_DEAD_CODE_DATA_ELIMINATION=n"
+        echo "[OK] LD_DEAD_CODE_DATA_ELIMINATION=y"
         echo
-        echo "LD DCE IS DISABLED FOR THIS BUILD"
+        echo "LD DCE IS ENABLED FOR THIS BUILD"
 
     # 9 Build Kernel
     - name: Build Kernel
@@ -247,7 +247,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "LD DCE OFF KERNEL BUILD PASSED"
+        echo "LD DCE ON KERNEL BUILD PASSED"
         echo "========================================"
 
     # 11 Upload Build Results
@@ -255,7 +255,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-build-ld-dce-off
+        name: kernel-build-ld-dce-on
         path: |
           k/out/.config
           k/build.log
