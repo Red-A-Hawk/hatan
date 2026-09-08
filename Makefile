@@ -950,9 +950,21 @@ endif
 ifdef CONFIG_POLLY_CLANG
 KBUILD_CFLAGS	+= -mllvm -polly \
 		   -mllvm -polly-ast-use-context \
-		   -mllvm -polly-invariant-load-hoisting \
 		   -mllvm -polly-run-inliner \
 		   -mllvm -polly-vectorizer=stripmine
+
+# -polly-invariant-load-hoisting is intentionally NOT used.
+#
+# It was dropped by the Android/LLVM Polly team from their
+# recommended kernel flag set after it was found to make Clang
+# crash when compiling some (Android 4.4, mainline 5.5) kernels.
+# It also offers little benefit for low-level kernel code, where
+# most loads are not safely invariant. Given this kernel already
+# hit an unrelated Polly-related boot failure (greedy fusion, see
+# below), avoid stacking a second known-risky Polly flag on top.
+#
+# Source: android-llvm mailing list, "LLVM Polly optimizations for
+# Android" thread.
 
 # Polly fusion strategy.
 #
