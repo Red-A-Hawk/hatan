@@ -953,27 +953,43 @@ KBUILD_CFLAGS	+= -mllvm -polly \
 		   -mllvm -polly-run-inliner \
 		   -mllvm -polly-vectorizer=stripmine
 
-# -polly-invariant-load-hoisting is intentionally isolated/disabled
-# here while -polly-loopfusion-greedy is under test.
+# -polly-invariant-load-hoisting is permanently disabled (not used
+# at all), kept here only as a documented reference -- do not
+# re-enable without a fresh round of on-device boot testing.
 #
-# Confirmed on-device: -polly-invariant-load-hoisting +
-# -polly-run-dce (Polly DCE) together caused a boot logo hang, with
-# no fusion flag involved at all. Since greedy fusion has not been
-# tested on its own yet, invariant-load-hoisting is kept out of the
-# mix for now so that if a bootloop occurs, it can be attributed to
-# greedy fusion itself rather than to the already-known
-# invariant-load-hoisting + Polly DCE interaction.
+# Confirmed by on-device testing: the combination of
+# -polly-invariant-load-hoisting and Polly DCE (-polly-run-dce)
+# caused a boot-logo hang in the tested no-fusion configuration.
+# The flag also works when used alone, but since Polly DCE is a
+# separately toggleable Kconfig option (CONFIG_POLLY_DCE), keeping
+# invariant-load-hoisting fully out of the build removes the risk
+# of the two being combined again, rather than relying on
+# conditional logic to keep them apart.
+#
+# KBUILD_CFLAGS += -mllvm -polly-invariant-load-hoisting
 
-# Polly fusion strategy: -polly-loopfusion-greedy.
+# Polly fusion strategy, tried in priority order:
 #
-# -polly-opt-fusion=max is NOT used here: removed upstream in Polly
-# 14.0.0, unsupported on the current toolchain (clang-r547379).
+#   1st choice: -polly-opt-fusion=max
+#     Only supported on OLD toolchains (e.g. clang-r416183b).
+#     Removed upstream in Polly 14.0.0, so cc-option silently
+#     fails on newer toolchains (e.g. clang-r547379) and falls
+#     through to the next choice below.
 #
-# This is a fresh, isolated test of greedy fusion alone (with
-# invariant-load-hoisting removed from the flag set above). Confirm
-# with an on-device boot test before relying on it.
+#   2nd choice: -polly-loopfusion-greedy
+#     The fusion flag available on modern toolchains
+#     (clang-r547379 and newer). Confirmed safe on-device in the
+#     current test configuration, both with and without Polly DCE,
+#     as long as -polly-invariant-load-hoisting stays disabled.
+#
+#   3rd choice: no fusion flag
+#     Falls back here only if neither option above is supported
+#     by the active toolchain at all.
+POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-opt-fusion=max)
+ifeq ($(POLLY_FUSION_FLAG),)
 POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-loopfusion-greedy)
-$(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag (toolchain does not support -polly-loopfusion-greedy)))
+endif
+$(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag))
 KBUILD_CFLAGS	+= $(POLLY_FUSION_FLAG)
 
 ifdef CONFIG_POLLY_DCE
