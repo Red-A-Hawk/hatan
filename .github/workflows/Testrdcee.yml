@@ -150,7 +150,7 @@ jobs:
           out/.config
         echo
         echo "USER OPTION:"
-        grep '^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=' \
+        grep '^# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set$' \
           out/.config
         echo
         echo "========================================"
@@ -170,18 +170,21 @@ jobs:
         echo "[OK] LD_DEAD_CODE_DATA_ELIMINATION=n"
 
     # 9 Inspect Kernel DCE Build Flags
-    - name: Inspect Kernel DCE Build Flags
+    - name: Verify LD DCE Build Flags Are Disabled
       run: |
         set -e
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
         echo "========================================"
         echo "CHECKING KERNEL BUILD FLAGS"
         echo "========================================"
+
         echo
         echo "========================================"
         echo "COMPILER FLAGS"
         echo "========================================"
+
         make -s O=out \
           ARCH=arm64 \
           LLVM=1 \
@@ -189,23 +192,50 @@ jobs:
           CC=clang \
           LD=ld.lld \
           -pn 2>/dev/null \
-          | grep -E -- \
-            '(^| )-ffunction-sections( |$)|(^| )-fdata-sections( |$)' \
-          | sort -u || true
+          > out/make-vars.txt
+
+        if grep -E -- \
+          '(^| )-ffunction-sections( |$)' \
+          out/make-vars.txt; then
+          echo
+          echo "[ERROR] -ffunction-sections IS PRESENT"
+          exit 1
+        fi
+
+        echo "[OK] -ffunction-sections NOT PRESENT"
+
+        if grep -E -- \
+          '(^| )-fdata-sections( |$)' \
+          out/make-vars.txt; then
+          echo
+          echo "[ERROR] -fdata-sections IS PRESENT"
+          exit 1
+        fi
+
+        echo "[OK] -fdata-sections NOT PRESENT"
+
         echo
         echo "========================================"
         echo "VMLINUX LINK FLAGS"
         echo "========================================"
-        make -s O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          -pn 2>/dev/null \
-          | grep -E -- \
-            '(^| )--gc-sections( |$)' \
-          | sort -u || true
+
+        if grep -E -- \
+          '(^| )--gc-sections( |$)' \
+          out/make-vars.txt; then
+          echo
+          echo "[ERROR] --gc-sections IS PRESENT"
+          exit 1
+        fi
+
+        echo "[OK] --gc-sections NOT PRESENT"
+
+        echo
+        echo "========================================"
+        echo "LD DCE BUILD FLAGS DISABLED"
+        echo "========================================"
+        echo "[OK] -ffunction-sections NOT PRESENT"
+        echo "[OK] -fdata-sections NOT PRESENT"
+        echo "[OK] --gc-sections NOT PRESENT"
 
     # 10 Compile test objects
     - name: Compile DCE Test Objects
