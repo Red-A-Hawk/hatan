@@ -156,15 +156,18 @@ jobs:
         echo "========================================"
         echo "EXPECTED"
         echo "========================================"
+
         grep -q \
           '^CONFIG_HAVE_LD_DEAD_CODE_DATA_ELIMINATION=y$' \
           out/.config
+
         grep -q \
-          '^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$' \
+          '^# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set$' \
           out/.config
+
         echo
         echo "[OK] HAVE_LD_DEAD_CODE_DATA_ELIMINATION=y"
-        echo "[OK] LD_DEAD_CODE_DATA_ELIMINATION=y"
+        echo "[OK] LD_DEAD_CODE_DATA_ELIMINATION=n"
 
     # 9 Inspect Kernel DCE Build Flags
     - name: Inspect Kernel DCE Build Flags
