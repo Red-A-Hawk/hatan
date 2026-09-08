@@ -636,7 +636,7 @@
 	*(.text.startup)						\
     MEM_DISCARD(init.text*)
 #define EXIT_DATA							\
-	*(.exit.data)							\
+    *(.exit.data .exit.data.*)				\
 	*(.fini_array)							\
 	*(.dtors)							\
 	MEM_DISCARD(exit.data)						\
