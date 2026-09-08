@@ -1,7 +1,9 @@
 name: Test LD Dead Code Data Elimination
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - xxx-17
 
 jobs:
   test-ld-dead-code-data-elimination:
@@ -14,38 +16,7 @@ jobs:
 
     steps:
 
-    # ============================================================
-    # 0. Strict Branch Check
-    # ============================================================
-
-    - name: Verify Required Branch
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "STRICT BRANCH VALIDATION"
-        echo "========================================"
-
-        echo "GitHub ref: $GITHUB_REF"
-        echo "GitHub ref name: $GITHUB_REF_NAME"
-
-        if [ "$GITHUB_REF_NAME" != "xxx-17" ]; then
-          echo
-          echo "[ERROR] WRONG BRANCH"
-          echo "[ERROR] This workflow MUST run from branch: xxx-17"
-          echo "[ERROR] Current branch: $GITHUB_REF_NAME"
-          exit 1
-        fi
-
-        echo
-        echo "[OK] Required branch: xxx-17"
-        echo "========================================"
-
-
-    # ============================================================
-    # 1. Checkout
-    # ============================================================
-
+    # 1 Checkout
     - name: Checkout kernel source
       uses: actions/checkout@v4
       with:
@@ -53,15 +24,10 @@ jobs:
         fetch-depth: 1
         path: k
 
-
-    # ============================================================
-    # 2. Dependencies
-    # ============================================================
-
+    # 2 Dependencies
     - name: Install dependencies
       run: |
         sudo apt update
-
         sudo apt install -y \
           git \
           bc \
@@ -75,210 +41,144 @@ jobs:
           curl \
           wget
 
-
-    # ============================================================
-    # 3. Toolchains
-    #
-    # Clang r547379 (crDroid)
-    # GCC 4.9 AArch64
-    # GCC 4.9 ARM32
-    # ============================================================
-
+    # 3 Toolchains
     - name: Clone LineageOS Toolchains
       run: |
         set -e
-
         echo "========================================"
         echo "SETTING UP TOOLCHAINS"
         echo "========================================"
-
         rm -rf clang gcc64 gcc32
-
         echo
         echo "========================================"
         echo "CLANG r547379"
         echo "========================================"
-
         git clone \
           --depth=1 \
           https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
           clang
-
         echo
         echo "========================================"
         echo "GCC64 4.9"
         echo "========================================"
-
         git clone \
           --depth=1 \
           https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
           gcc64
-
         echo
         echo "========================================"
         echo "GCC32 4.9"
         echo "========================================"
-
         git clone \
           --depth=1 \
           https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
           gcc32
 
-
-    # ============================================================
-    # 4. Environment
-    # ============================================================
-
+    # 4 Environment
     - name: Setup Environment
       run: |
         echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
         echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
         echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
-
         echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-
-    # ============================================================
-    # 5. Verify Toolchain
-    # ============================================================
-
+    # 5 Verify Toolchain
     - name: Verify Toolchain
       run: |
         set -e
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "CLANG"
         echo "========================================"
-
         which clang
         clang --version
-
         echo
         echo "========================================"
         echo "LLD"
         echo "========================================"
-
         which ld.lld
         ld.lld --version
-
         echo
         echo "========================================"
         echo "LLVM TOOLS"
         echo "========================================"
-
         which llvm-ar
         which llvm-nm
         which llvm-objcopy
         which llvm-objdump
         which llvm-strip
 
-
-    # ============================================================
-    # 6. Load Original Defconfig
-    # ============================================================
-
+    # 6 Load defconfig
     - name: Load Original violet-perf defconfig
       run: |
         set -e
-
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "LOADING DEFCONFIG"
         echo "========================================"
-
         make O=out \
           ARCH=arm64 \
           vendor/violet-perf_defconfig
-
         test -f out/.config
 
-
-    # ============================================================
-    # 7. Resolve Configuration
-    # ============================================================
-
+    # 7 olddefconfig
     - name: Resolve Configuration
       run: |
         set -e
-
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "RUNNING OLDDEFCONFIG"
         echo "========================================"
-
         make O=out \
           ARCH=arm64 \
           olddefconfig
 
-
-    # ============================================================
-    # 8. Verify LD DCE Configuration
-    # ============================================================
-
+    # 8 Verify DCE config
     - name: Verify LD DCE Configuration
       run: |
         set -e
-
         echo "========================================"
         echo "LD DEAD CODE DATA ELIMINATION"
         echo "========================================"
-
         echo
         echo "HAVE SYMBOL:"
         grep '^CONFIG_HAVE_LD_DEAD_CODE_DATA_ELIMINATION=' \
           out/.config
-
         echo
         echo "USER OPTION:"
         grep '^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=' \
           out/.config
-
         echo
         echo "========================================"
         echo "EXPECTED"
         echo "========================================"
-
         grep -q \
           '^CONFIG_HAVE_LD_DEAD_CODE_DATA_ELIMINATION=y$' \
           out/.config
-
         grep -q \
           '^CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y$' \
           out/.config
-
         echo
         echo "[OK] HAVE_LD_DEAD_CODE_DATA_ELIMINATION=y"
         echo "[OK] LD_DEAD_CODE_DATA_ELIMINATION=y"
 
-
-    # ============================================================
-    # 9. Inspect Kernel Build Flags
-    # ============================================================
-
+    # 9 Inspect Kernel DCE Build Flags
     - name: Inspect Kernel DCE Build Flags
       run: |
         set -e
-
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "CHECKING KERNEL BUILD FLAGS"
         echo "========================================"
-
         echo
         echo "========================================"
         echo "COMPILER FLAGS"
         echo "========================================"
-
         make -s O=out \
           ARCH=arm64 \
           LLVM=1 \
@@ -289,12 +189,10 @@ jobs:
           | grep -E -- \
             '(^| )-ffunction-sections( |$)|(^| )-fdata-sections( |$)' \
           | sort -u || true
-
         echo
         echo "========================================"
         echo "VMLINUX LINK FLAGS"
         echo "========================================"
-
         make -s O=out \
           ARCH=arm64 \
           LLVM=1 \
@@ -306,23 +204,15 @@ jobs:
             '(^| )--gc-sections( |$)' \
           | sort -u || true
 
-
-    # ============================================================
-    # 10. Compile Real DCE Test Objects
-    # ============================================================
-
+    # 10 Compile test objects
     - name: Compile DCE Test Objects
       run: |
         set -e
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "CREATING DCE TEST"
         echo "========================================"
-
         mkdir -p out/ld-dce-test
-
         cat > out/ld-dce-test/live.c <<'EOF'
         int live_function(void)
         {
@@ -331,7 +221,6 @@ jobs:
 
         int live_data = 42;
         EOF
-
         cat > out/ld-dce-test/dead.c <<'EOF'
         int dead_function(void)
         {
@@ -340,12 +229,10 @@ jobs:
 
         int dead_data = 1234;
         EOF
-
         echo
         echo "========================================"
         echo "COMPILING WITH DCE SECTIONS"
         echo "========================================"
-
         clang \
           --target=aarch64-linux-gnu \
           -ffunction-sections \
@@ -353,7 +240,6 @@ jobs:
           -c \
           out/ld-dce-test/live.c \
           -o out/ld-dce-test/live.o
-
         clang \
           --target=aarch64-linux-gnu \
           -ffunction-sections \
@@ -361,33 +247,23 @@ jobs:
           -c \
           out/ld-dce-test/dead.c \
           -o out/ld-dce-test/dead.o
-
         echo
         echo "========================================"
         echo "OBJECT SECTIONS"
         echo "========================================"
-
         llvm-objdump -h \
           out/ld-dce-test/live.o
-
         llvm-objdump -h \
           out/ld-dce-test/dead.o
 
-
-    # ============================================================
-    # 11. Link With --gc-sections
-    # ============================================================
-
+    # 11 Link with gc sections
     - name: Test Linker Garbage Collection
       run: |
         set -e
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "LINKING WITH --gc-sections"
         echo "========================================"
-
         cat > out/ld-dce-test/start.S <<'EOF'
         .text
         .global _start
@@ -395,13 +271,11 @@ jobs:
                 bl live_function
                 b .
         EOF
-
         clang \
           --target=aarch64-linux-gnu \
           -c \
           out/ld-dce-test/start.S \
           -o out/ld-dce-test/start.o
-
         ld.lld \
           --gc-sections \
           -e _start \
@@ -409,56 +283,43 @@ jobs:
           out/ld-dce-test/start.o \
           out/ld-dce-test/live.o \
           out/ld-dce-test/dead.o
-
         echo
         echo "========================================"
         echo "LINK RESULT"
         echo "========================================"
-
         test -f out/ld-dce-test/dce-test.elf
-
         llvm-nm \
           out/ld-dce-test/dce-test.elf \
           | tee out/ld-dce-test/symbols.txt
-
         echo
         echo "========================================"
         echo "VERIFYING DEAD CODE REMOVAL"
         echo "========================================"
-
         if grep -q 'dead_function' \
           out/ld-dce-test/symbols.txt; then
           echo "[ERROR] dead_function WAS NOT REMOVED"
           exit 1
         fi
-
         if grep -q 'dead_data' \
           out/ld-dce-test/symbols.txt; then
           echo "[ERROR] dead_data WAS NOT REMOVED"
           exit 1
         fi
-
         if ! grep -q 'live_function' \
           out/ld-dce-test/symbols.txt; then
           echo "[ERROR] live_function WAS REMOVED"
           exit 1
         fi
-
         echo
         echo "[OK] live_function PRESENT"
         echo "[OK] dead_function REMOVED"
         echo "[OK] dead_data REMOVED"
-
         echo
         echo "========================================"
         echo "LD DCE TEST PASSED"
         echo "========================================"
 
-
-    # ============================================================
-    # 12. Upload Test Results
-    # ============================================================
-
+    # 12 Upload
     - name: Upload LD DCE Test Results
       if: always()
       uses: actions/upload-artifact@v4
