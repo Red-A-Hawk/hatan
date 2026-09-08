@@ -907,6 +907,7 @@ steps:
     echo "BUILD START"
     echo "========================================"
 
+
     monitor_resources() {
       while true; do
         echo
@@ -964,6 +965,7 @@ steps:
     }
 
     trap cleanup_monitor EXIT
+
 
     make -j$(nproc --all) \
       O=out \
