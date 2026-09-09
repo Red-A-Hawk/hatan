@@ -293,7 +293,8 @@ jobs:
           fi
           echo
           echo "5. Release fallback"
-          if grep -Fq "[FALLBACK]" /tmp/mlgo-release.log; then
+          if grep -Fq "Requested regalloc eviction advisor analysis could not be created. Using default" \
+              /tmp/mlgo-release.log; then
             echo "[FALLBACK] Release advisor fell back to default"
           else
             echo "[NO FALLBACK] Release advisor did not report fallback"
