@@ -1,10 +1,10 @@
-name: Test MLGO Model A B C r547379
+name: Test Real AArch64 MLGO RegAlloc vvvv
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-mlgo-model:
+  test-mlgo-regalloc:
     runs-on: ubuntu-22.04
 
     steps:
@@ -19,260 +19,177 @@ jobs:
           echo "========================================"
           echo "CLANG VERSION"
           echo "========================================"
+
           clang-r547379/bin/clang-20 --version
 
-          echo
-          echo "========================================"
-          echo "CLANG-20 FILE"
-          echo "========================================"
-          ls -lh clang-r547379/bin/clang-20
-          file clang-r547379/bin/clang-20
+      - name: Create AArch64 Test Source
+        run: |
+          cat > /tmp/mlgo_test.c <<'EOF'
+          __attribute__((noinline))
+          long mlgo_test(
+              long a, long b, long c, long d,
+              long e, long f, long g, long h,
+              long i, long j, long k, long l)
+          {
+              long x0 = a + b;
+              long x1 = c + d;
+              long x2 = e + f;
+              long x3 = g + h;
+              long x4 = i + j;
+              long x5 = k + l;
 
-      - name: A - Search External MLGO Models
+              long y0 = x0 * x1;
+              long y1 = x2 * x3;
+              long y2 = x4 * x5;
+
+              long z0 = y0 + y1;
+              long z1 = y2 + x0;
+              long z2 = z0 * z1;
+
+              return z2 + y0 + y1 + y2 + x1 + x2 + x3;
+          }
+
+          __attribute__((noinline))
+          long mlgo_test2(long a, long b, long c, long d)
+          {
+              long r0 = a + b;
+              long r1 = b + c;
+              long r2 = c + d;
+              long r3 = d + a;
+
+              long r4 = r0 * r1;
+              long r5 = r2 * r3;
+              long r6 = r4 + r5;
+
+              return r6 + r0 + r1 + r2 + r3;
+          }
+          EOF
+
+          echo "========================================"
+          echo "AARCH64 TEST SOURCE"
+          echo "========================================"
+
+          cat /tmp/mlgo_test.c
+
+      - name: Real AArch64 RegAlloc MLGO Diagnostic
         run: |
           echo "========================================"
-          echo "A - EXTERNAL MLGO MODEL SEARCH"
+          echo "REAL AARCH64 MLGO REGALLOC TEST"
           echo "========================================"
 
-          find clang-r547379 \
-            -type f \
-            \( \
-              -iname "model.tflite" \
-              -o -iname "saved_model.pb" \
-              -o -iname "fingerprint.pb" \
-              -o -iname "policy_specs.pbtxt" \
-              -o -iname "*.tflite" \
-            \) \
-            -print | tee /tmp/mlgo-model-files.txt
+          clang-r547379/bin/clang-20 \
+            -target aarch64-linux-android \
+            -O2 \
+            -S \
+            /tmp/mlgo_test.c \
+            -o /tmp/mlgo_test.s \
+            -mllvm -regalloc-evict=release \
+            -mllvm -debug-only=regalloc-evict \
+            2>&1 | tee /tmp/mlgo-regalloc.log
+
+      - name: Search MLGO Diagnostic Output
+        run: |
+          echo "========================================"
+          echo "MLGO / REGALLOC DIAGNOSTIC OUTPUT"
+          echo "========================================"
 
           echo
-          echo "----- MLGO directories -----"
+          echo "----- Relevant diagnostic lines -----"
 
-          find clang-r547379 \
-            -type d \
-            \( \
-              -iname "*mlgo*" \
-              -o -iname "*regalloc*evict*" \
-              -o -iname "*inlining*" \
-            \) \
-            -print | tee /tmp/mlgo-model-dirs.txt
-
-          echo
-          echo "----- MLGO paths -----"
-
-          find clang-r547379 -print \
-            | grep -Ei \
-              'mlgo|regalloc.*evict|model\.tflite|saved_model|fingerprint|policy_specs' \
-            | tee /tmp/mlgo-model-paths.txt \
+          grep -Ei \
+            'mlgo|regalloc|evict|advisor|model|tflite|tensorflow|policy|release|fallback|default' \
+            /tmp/mlgo-regalloc.log \
             || true
 
           echo
-          echo "----- A RESULT -----"
+          echo "----- Full diagnostic log -----"
 
-          if [ -s /tmp/mlgo-model-files.txt ] || [ -s /tmp/mlgo-model-dirs.txt ]; then
-            echo "[A] EXTERNAL MLGO MODEL MATERIAL FOUND"
-          else
-            echo "[A] NO EXTERNAL MLGO MODEL FOUND"
-          fi
+          cat /tmp/mlgo-regalloc.log
 
-      - name: B - Search Embedded MLGO Model
+      - name: Verify AArch64 Code Generation
         run: |
           echo "========================================"
-          echo "B - EMBEDDED MLGO MODEL SEARCH"
+          echo "AARCH64 CODE GENERATION"
           echo "========================================"
 
-          mkdir -p /tmp/mlgo-binary-scan
-
-          find clang-r547379/bin \
-            -type f \
-            -perm /111 \
-            -print \
-            | sort \
-            > /tmp/mlgo-binary-list.txt
-
-          while IFS= read -r BIN; do
-            echo
-            echo "----------------------------------------"
-            echo "$BIN"
-            echo "----------------------------------------"
-
-            SAFE_NAME=$(echo "$BIN" | tr '/' '_')
-
-            strings -a "$BIN" \
-              > "/tmp/mlgo-binary-scan/${SAFE_NAME}.strings" \
-              2>/dev/null || true
-
-            grep -Ei \
-              'regalloc-evict-aosp|model\.tflite|saved_model\.pb|fingerprint\.pb|policy_specs\.pbtxt|mlgo-models|tensorflow|MLGO' \
-              "/tmp/mlgo-binary-scan/${SAFE_NAME}.strings" \
-              || true
-
-          done < /tmp/mlgo-binary-list.txt
-
-      - name: B - Deep Binary Byte Scan
-        run: |
-          echo "========================================"
-          echo "B - DEEP MLGO BYTE SCAN"
-          echo "========================================"
-
-          FOUND=0
-
-          while IFS= read -r BIN; do
-            echo
-            echo "----------------------------------------"
-            echo "$BIN"
-            echo "----------------------------------------"
-
-            if grep -aEi \
-              'regalloc-evict-aosp|mlgo-models|model\.tflite|saved_model\.pb|policy_specs\.pbtxt|fingerprint\.pb' \
-              "$BIN" \
-              > /tmp/mlgo-byte-match.txt \
-              2>/dev/null; then
-
-              cat /tmp/mlgo-byte-match.txt
-              FOUND=1
-            fi
-
-          done < /tmp/mlgo-binary-list.txt
+          file /tmp/mlgo_test.s
 
           echo
-          echo "========================================"
-          echo "B RESULT"
-          echo "========================================"
+          echo "----- Assembly -----"
 
-          if [ "$FOUND" -eq 1 ]; then
-            echo "[B] KNOWN EMBEDDED MLGO MODEL SIGNATURE FOUND"
-          else
-            echo "[B] NO KNOWN EMBEDDED MLGO MODEL SIGNATURE FOUND"
-          fi
+          cat /tmp/mlgo_test.s
 
-      - name: B - ELF Section Analysis
+          echo
+          echo "----- Verify AArch64 registers -----"
+
+          grep -E \
+            'x[0-9]+|w[0-9]+' \
+            /tmp/mlgo_test.s \
+            | head -100 \
+            || true
+
+      - name: Real MLGO Advisor Diagnostic With LLVM Debug
         run: |
           echo "========================================"
-          echo "B - ELF SECTION ANALYSIS"
-          echo "========================================"
-
-          while IFS= read -r BIN; do
-            if file "$BIN" | grep -q ELF; then
-              echo
-              echo "----------------------------------------"
-              echo "$BIN"
-              echo "----------------------------------------"
-
-              readelf -S "$BIN" 2>/dev/null \
-                | grep -Ei \
-                  'mlgo|model|tensorflow|tflite|rodata|llvm' \
-                || true
-            fi
-          done < /tmp/mlgo-binary-list.txt
-
-      - name: C - Verify MLGO Runtime
-        run: |
-          echo "========================================"
-          echo "C - MLGO RUNTIME VERIFICATION"
+          echo "MLGO ADVISOR DEBUG"
           echo "========================================"
 
           clang-r547379/bin/clang-20 \
-            -target aarch64-linux-gnu \
+            -target aarch64-linux-android \
             -O2 \
+            -S \
+            /tmp/mlgo_test.c \
+            -o /tmp/mlgo_advisor.s \
             -mllvm -regalloc-evict=release \
-            -c /dev/null \
-            -x c \
-            -o /tmp/mlgo-runtime-test.o
+            -mllvm -debug-only=regalloc-evict \
+            -mllvm -debug \
+            2>&1 | tee /tmp/mlgo-advisor-debug.log
 
-          echo "[C] regalloc-evict=release accepted"
-
-          clang-r547379/bin/clang-20 \
-            -target aarch64-linux-gnu \
-            -O2 \
-            -mllvm -regalloc-enable-advisor=release \
-            -c /dev/null \
-            -x c \
-            -o /tmp/mlgo-advisor-test.o
-
-          echo "[C] regalloc-enable-advisor=release accepted"
-
-      - name: MLGO Advisor Diagnostic
+      - name: Analyze Model Loading Attempt
         run: |
           echo "========================================"
-          echo "MLGO ADVISOR DIAGNOSTIC"
+          echo "MODEL LOADING ANALYSIS"
           echo "========================================"
 
-          clang-r547379/bin/clang-20 \
-            -target aarch64-linux-gnu \
-            -O2 \
-            -mllvm -regalloc-evict=release \
-            -c /dev/null \
-            -x c \
-            -o /tmp/mlgo-debug.o \
-            2>&1 | tee /tmp/mlgo-advisor.log
-
-      - name: Final A B C Classification
-        run: |
           echo
-          echo "=========================================="
-          echo "        FINAL MLGO A / B / C RESULT"
-          echo "=========================================="
+          echo "----- Model / Advisor / Fallback messages -----"
+
+          grep -Ein \
+            'model|mlgo|advisor|eviction|evict|tensorflow|tflite|saved.model|policy|fingerprint|could not be created|using default|fallback' \
+            /tmp/mlgo-advisor-debug.log \
+            || true
 
           echo
-          echo "A = External MLGO model"
-          echo "B = Embedded MLGO model"
-          echo "C = MLGO runtime without detectable model"
-
-          echo
-          echo "----- A: External model files -----"
-
-          if [ -s /tmp/mlgo-model-files.txt ]; then
-            cat /tmp/mlgo-model-files.txt
-          else
-            echo "NONE"
-          fi
-
-          echo
-          echo "----- A: External model directories -----"
-
-          if [ -s /tmp/mlgo-model-dirs.txt ]; then
-            cat /tmp/mlgo-model-dirs.txt
-          else
-            echo "NONE"
-          fi
-
-          echo
-          echo "----- B: Binary model signatures -----"
-
-          grep -RHiE \
-            'regalloc-evict-aosp|model\.tflite|saved_model\.pb|policy_specs\.pbtxt|fingerprint\.pb|mlgo-models' \
-            /tmp/mlgo-binary-scan \
-            2>/dev/null \
-            || echo "NONE"
-
-          echo
-          echo "=========================================="
+          echo "========================================"
           echo "FINAL INTERPRETATION"
-          echo "=========================================="
+          echo "========================================"
 
-          if [ -s /tmp/mlgo-model-files.txt ] || [ -s /tmp/mlgo-model-dirs.txt ]; then
-            echo "[A] EXTERNAL MLGO MODEL DETECTED"
+          if grep -Eiq \
+            'model|tflite|tensorflow|saved.model|policy|fingerprint' \
+            /tmp/mlgo-advisor-debug.log; then
 
-          elif grep -RqiE \
-            'regalloc-evict-aosp|model\.tflite|saved_model\.pb|policy_specs\.pbtxt|fingerprint\.pb|mlgo-models' \
-            /tmp/mlgo-binary-scan \
-            2>/dev/null; then
+            echo "[MLGO] MODEL-RELATED ACTIVITY DETECTED"
 
-            echo "[B] EMBEDDED MLGO MODEL SIGNATURE DETECTED"
+          elif grep -Eiq \
+            'eviction advisor|regalloc eviction|regalloc-evict' \
+            /tmp/mlgo-advisor-debug.log; then
+
+            echo "[MLGO] REGALLOC EVICTION ADVISOR ACTIVITY DETECTED"
+            echo "[MLGO] NO EXPLICIT MODEL LOAD MESSAGE DETECTED"
 
           else
-            echo "[C] MLGO RUNTIME PRESENT, BUT NO DETECTABLE MODEL FOUND"
+
+            echo "[MLGO] NO MLGO/REGALLOC DIAGNOSTIC ACTIVITY DETECTED"
+
           fi
 
-      - name: Upload MLGO A B C Diagnostic
+      - name: Upload MLGO Diagnostic
         uses: actions/upload-artifact@v4
         with:
-          name: mlgo-abc-diagnostic
+          name: mlgo-regalloc-diagnostic-r547379
           path: |
-            /tmp/mlgo-model-files.txt
-            /tmp/mlgo-model-dirs.txt
-            /tmp/mlgo-model-paths.txt
-            /tmp/mlgo-binary-list.txt
-            /tmp/mlgo-binary-scan
-            /tmp/mlgo-advisor.log
+            /tmp/mlgo_test.c
+            /tmp/mlgo_test.s
+            /tmp/mlgo_advisor.s
+            /tmp/mlgo-regalloc.log
+            /tmp/mlgo-advisor-debug.log
