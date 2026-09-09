@@ -54,7 +54,6 @@ jobs:
     - name: Clone LineageOS Toolchains
       run: |
         set -e
-
         rm -rf clang gcc64 gcc32
 
         git clone --depth=1 \
@@ -166,61 +165,101 @@ jobs:
 
         fi
 
-    - name: Build Kernel V=1 with Bear
+    - name: Build Kernel with Bear
       run: |
         set -e
 
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         rm -f compile_commands.json
+        rm -f bear-build.log
         rm -f build.log
 
-        echo "========================================" > build.log
-        echo "FULL V=1 BUILD LOG" >> build.log
-        echo "MLGO MODE: ${{ matrix.mlgo }}" >> build.log
-        echo "========================================" >> build.log
-
-        bear --output compile_commands.json -- \
-          make V=1 -j$(nproc --all) \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            >> build.log 2>&1
+        bear -- make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          AS=llvm-as \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE="$CROSS_COMPILE" \
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+          CLANG_TRIPLE="$CLANG_TRIPLE" \
+          2>&1 | tee build.log
 
         test -f compile_commands.json
-        test -f build.log
 
-        echo "========================================"
-        echo "BUILD FINISHED"
-        echo "========================================"
+        python3 - <<'PY'
+        import json
+        import shlex
 
-        echo "Build log:"
-        ls -lh build.log
+        with open("compile_commands.json", "r", encoding="utf-8") as f:
+            commands = json.load(f)
 
-        echo "Compile database:"
-        ls -lh compile_commands.json
+        with open("bear-build.log", "w", encoding="utf-8") as f:
+            for entry in commands:
+
+                arguments = entry.get("arguments")
+
+                if arguments:
+                    f.write(shlex.join(arguments))
+                    f.write("\n")
+                    continue
+
+                command = entry.get("command")
+
+                if command:
+                    f.write(command)
+                    f.write("\n")
+        PY
+
+        test -f bear-build.log
 
     - name: Verify MLGO Flag from build.log
       run: |
         set -e
 
         echo "========================================"
-        echo "MLGO FLAG VERIFICATION FROM BUILD.LOG"
+        echo "MLGO FLAG VERIFICATION"
         echo "========================================"
 
         TARGET="-mllvm -regalloc-enable-advisor=release"
+
+        python3 - <<'PY'
+        import json
+        import shlex
+
+        with open("compile_commands.json", "r", encoding="utf-8") as f:
+            commands = json.load(f)
+
+        with open("build.log", "a", encoding="utf-8") as log:
+
+            log.write("\n")
+            log.write("========================================\n")
+            log.write("BEAR CLANG COMMANDS\n")
+            log.write("========================================\n")
+
+            for entry in commands:
+
+                arguments = entry.get("arguments")
+
+                if arguments:
+                    log.write(shlex.join(arguments))
+                    log.write("\n")
+                    continue
+
+                command = entry.get("command")
+
+                if command:
+                    log.write(command)
+                    log.write("\n")
+        PY
 
         if [ "${{ matrix.mlgo }}" = "with" ]; then
 
@@ -257,12 +296,75 @@ jobs:
         echo "========================================"
 
         grep -Ein \
-          '(-flto|-mllvm|polly|mlgo|regalloc|dead.?code)' \
+          '(^|[[:space:]])(-flto|-mllvm|.*polly.*|.*mlgo.*|.*regalloc.*|.*dead.?code.*)' \
           build.log || true
 
         echo "========================================"
         echo "FLAG SCAN COMPLETE"
         echo "========================================"
+
+    # ============================================================
+    # Verify gc-sections in the actual link command.
+    #
+    # --gc-sections is a LINKER flag (LDFLAGS_vmlinux), not a
+    # per-file compile flag, so it never appears in
+    # compile_commands.json / bear-build.log (those only record
+    # per-source-file compile invocations). It only shows up in
+    # make's own output for the final link step, and only when
+    # that step is run with V=1 (otherwise make prints the short
+    # "LD vmlinux" form instead of the full command line).
+    #
+    # To verify it without a full rebuild: delete only the final
+    # vmlinux binary (all .o files stay cached from the previous
+    # step) and re-run just the link step with V=1.
+    # ============================================================
+    - name: Verify gc-sections in Link Command
+      run: |
+        set -e
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "FORCING RELINK WITH VERBOSE OUTPUT"
+        echo "========================================"
+
+        rm -f out/vmlinux
+
+        make V=1 \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          AS=llvm-as \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE="$CROSS_COMPILE" \
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+          CLANG_TRIPLE="$CLANG_TRIPLE" \
+          vmlinux \
+          2>&1 | tee link-verbose.log
+
+        test -f out/vmlinux
+
+        echo
+        echo "========================================"
+        echo "SEARCHING FOR --gc-sections IN LINK COMMAND"
+        echo "========================================"
+
+        if grep -n "gc-sections" link-verbose.log; then
+          echo
+          echo "[OK] --gc-sections found in the actual link command"
+        else
+          echo
+          echo "[FAIL] --gc-sections NOT found in the link command"
+          echo "[FAIL] LD_DEAD_CODE_DATA_ELIMINATION linker step may not be active"
+          exit 1
+        fi
 
     - name: Measure vmlinux
       run: |
@@ -286,5 +388,7 @@ jobs:
         name: mlgo-evidence-${{ matrix.mlgo }}
         path: |
           k/compile_commands.json
+          k/bear-build.log
           k/build.log
+          k/link-verbose.log
           k/vmlinux-size.txt
