@@ -172,6 +172,8 @@ jobs:
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         rm -f compile_commands.json
+        rm -f build.log
+        rm -f bear-build.log
 
         bear -- make -j$(nproc --all) \
           O=out \
@@ -196,6 +198,35 @@ jobs:
         echo "=== COMPILE DATABASE ==="
         ls -lh compile_commands.json
 
+        python3 - <<'PY'
+        import json
+        import shlex
+
+        with open("compile_commands.json", "r", encoding="utf-8") as f:
+            commands = json.load(f)
+
+        with open("bear-build.log", "w", encoding="utf-8") as f:
+            for entry in commands:
+
+                arguments = entry.get("arguments")
+
+                if arguments:
+                    f.write(shlex.join(arguments))
+                    f.write("\n")
+                    continue
+
+                command = entry.get("command")
+
+                if command:
+                    f.write(command)
+                    f.write("\n")
+        PY
+
+        test -f bear-build.log
+
+        echo "=== BEAR BUILD LOG ==="
+        ls -lh bear-build.log
+
     - name: Verify MLGO Flag from Bear
       run: |
         set -e
@@ -206,6 +237,7 @@ jobs:
 
         python3 - <<'PY'
         import json
+        import shlex
         import sys
 
         with open("compile_commands.json", "r", encoding="utf-8") as f:
@@ -216,6 +248,20 @@ jobs:
         found = []
 
         for entry in commands:
+
+            arguments = entry.get("arguments", [])
+
+            if arguments:
+                for i in range(len(arguments) - 1):
+                    if (
+                        arguments[i] == "-mllvm"
+                        and arguments[i + 1] == target
+                    ):
+                        found.append(
+                            shlex.join(arguments)
+                        )
+                        break
+
             command = entry.get("command", "")
 
             if target in command:
@@ -246,10 +292,72 @@ jobs:
                 for command in found:
                     print(command)
                     print()
+
             else:
-                print("[OK] MLGO Release flags not found in MLGO-OFF build")
+                print("[OK] MLGO Release flag not found in MLGO-OFF build")
                 print("[INFO] Continuing build...")
+
         PY
+
+    - name: Extract LTO Polly MLGO Flags
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "LTO / THINLTO / POLLY / MLGO FLAG SCAN"
+        echo "========================================"
+
+        python3 - <<'PY'
+        import json
+        import shlex
+
+        with open("compile_commands.json", "r", encoding="utf-8") as f:
+            commands = json.load(f)
+
+        keywords = (
+            "lto",
+            "thinlto",
+            "polly",
+            "mlgo",
+            "regalloc",
+            "dead-code",
+            "dead_code",
+        )
+
+        with open("bear-build.log", "a", encoding="utf-8") as log:
+            log.write("\n")
+            log.write("========================================\n")
+            log.write("LTO / THINLTO / POLLY / MLGO FLAG MATCHES\n")
+            log.write("========================================\n")
+
+            for entry in commands:
+
+                arguments = entry.get("arguments", [])
+
+                if not arguments:
+                    command = entry.get("command", "")
+
+                    if command:
+                        lower = command.lower()
+
+                        if any(keyword in lower for keyword in keywords):
+                            print(command)
+                            log.write(command + "\n")
+
+                    continue
+
+                command = shlex.join(arguments)
+                lower = command.lower()
+
+                if any(keyword in lower for keyword in keywords):
+                    print(command)
+                    log.write(command + "\n")
+
+        PY
+
+        echo "========================================"
+        echo "FLAG SCAN COMPLETE"
+        echo "========================================"
 
     - name: Measure vmlinux
       run: |
@@ -273,5 +381,6 @@ jobs:
         name: mlgo-evidence-${{ matrix.mlgo }}
         path: |
           k/compile_commands.json
+          k/bear-build.log
           k/build.log
           k/vmlinux-size.txt
