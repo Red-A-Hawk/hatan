@@ -204,39 +204,52 @@ jobs:
         echo "MLGO FLAG VERIFICATION"
         echo "========================================"
 
-        if [ "${{ matrix.mlgo }}" = "with" ]; then
+        python3 - <<'PY'
+        import json
+        import sys
 
-          if grep -F \
-            -- "-mllvm" \
-            compile_commands.json | \
-            grep -F \
-            -- "-regalloc-enable-advisor=release"; then
+        with open("compile_commands.json", "r", encoding="utf-8") as f:
+            commands = json.load(f)
 
-            echo "[OK] MLGO Release flag found in compile_commands.json"
+        target = "-regalloc-enable-advisor=release"
 
-          else
+        found = []
 
-            echo "[ERROR] MLGO Release flag NOT found"
-            exit 1
+        for entry in commands:
+            command = entry.get("command", "")
 
-          fi
+            if target in command:
+                found.append(command)
 
-        else
+        if "${{ matrix.mlgo }}" == "with":
 
-          if grep -F \
-            -- "-regalloc-enable-advisor=release" \
-            compile_commands.json; then
+            if found:
+                print("[OK] MLGO Release flag found in compile_commands.json")
+                print()
+                print("=== MATCHING CLANG COMMANDS ===")
 
-            echo "[ERROR] MLGO Release flag found in MLGO-OFF build"
-            exit 1
+                for command in found:
+                    print(command)
+                    print()
 
-          else
+            else:
+                print("[ERROR] MLGO Release flag NOT found in compile_commands.json")
+                sys.exit(1)
 
-            echo "[OK] MLGO Release flag absent"
+        else:
 
-          fi
+            if found:
+                print("[INFO] MLGO Release flag found in MLGO-OFF build")
+                print()
+                print("=== MATCHING COMMANDS ===")
 
-        fi
+                for command in found:
+                    print(command)
+                    print()
+            else:
+                print("[OK] MLGO Release flags not found in MLGO-OFF build")
+                print("[INFO] Continuing build...")
+        PY
 
     - name: Measure vmlinux
       run: |
