@@ -48,7 +48,8 @@ jobs:
           libelf-dev \
           libncurses-dev \
           python3 \
-          openjdk-17-jre-headless
+          openjdk-17-jre-headless \
+          bear
 
     - name: Clone LineageOS Toolchains
       run: |
@@ -93,6 +94,10 @@ jobs:
         which llvm-objcopy
         which llvm-objdump
         which llvm-strip
+
+        echo "=== BEAR ==="
+        which bear
+        bear --version
 
     - name: Load Original violet-perf defconfig
       run: |
@@ -180,28 +185,15 @@ jobs:
           echo "[OK] CONFIG_MLGO_CLANG=n"
         fi
 
-    - name: Verify MLGO Kernel Integration
-      if: matrix.mlgo == 'with'
-      run: |
-        set -e
-
-        echo "=== KERNEL MLGO MAKEFILE ==="
-
-        grep -n \
-          "regalloc-enable-advisor" \
-          Makefile
-
-        grep -n \
-          "CONFIG_MLGO_CLANG" \
-          Makefile
-
-    - name: Build Kernel
+    - name: Build Kernel with Bear
       run: |
         set -e
 
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        make -j$(nproc --all) \
+        rm -f compile_commands.json
+
+        bear -- make -j$(nproc --all) \
           O=out \
           ARCH=arm64 \
           LLVM=1 \
@@ -219,20 +211,50 @@ jobs:
           CLANG_TRIPLE="$CLANG_TRIPLE" \
           2>&1 | tee build.log
 
-    - name: Verify MLGO Build Flag
-      if: matrix.mlgo == 'with'
+        test -f compile_commands.json
+
+        echo "=== COMPILE DATABASE ==="
+        ls -lh compile_commands.json
+
+    - name: Verify MLGO Flag from Bear
       run: |
         set -e
 
-        echo "=== SEARCHING FOR MLGO RELEASE FLAG ==="
+        echo "========================================"
+        echo "MLGO FLAG VERIFICATION"
+        echo "========================================"
 
-        if grep -R \
-          -- "-mllvm -regalloc-enable-advisor=release" \
-          out 2>/dev/null; then
-          echo "[OK] MLGO Release flag detected"
+        if [ "${{ matrix.mlgo }}" = "with" ]; then
+
+          if grep -F \
+            -- "-mllvm" \
+            compile_commands.json | \
+            grep -F \
+            -- "-regalloc-enable-advisor=release"; then
+
+            echo "[OK] MLGO Release flag found in compile_commands.json"
+
+          else
+
+            echo "[ERROR] MLGO Release flag NOT found"
+            exit 1
+
+          fi
+
         else
-          echo "[INFO] MLGO flag is supplied through the kernel Makefile"
-          grep -n "regalloc-enable-advisor" Makefile
+
+          if grep -F \
+            -- "-regalloc-enable-advisor=release" \
+            compile_commands.json; then
+
+            echo "[ERROR] MLGO Release flag found in MLGO-OFF build"
+            exit 1
+
+          else
+
+            echo "[OK] MLGO Release flag absent"
+          fi
+
         fi
 
     - name: Measure vmlinux
@@ -248,15 +270,14 @@ jobs:
         echo "vmlinux size: $SIZE bytes"
         echo "========================================"
 
-        echo "VMLINUX_SIZE=$SIZE" >> "$GITHUB_ENV"
-
-    - name: Save vmlinux size
-      run: |
         echo "MLGO=${{ matrix.mlgo }}" > vmlinux-size.txt
-        echo "SIZE=$(stat -c '%s' out/vmlinux)" >> vmlinux-size.txt
+        echo "VMLINUX_SIZE=$SIZE" >> vmlinux-size.txt
 
-    - name: Upload vmlinux size
+    - name: Upload MLGO Evidence
       uses: actions/upload-artifact@v4
       with:
-        name: vmlinux-size-${{ matrix.mlgo }}
-        path: k/vmlinux-size.txt
+        name: mlgo-evidence-${{ matrix.mlgo }}
+        path: |
+          k/compile_commands.json
+          k/build.log
+          k/vmlinux-size.txt
