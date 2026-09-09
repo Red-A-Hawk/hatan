@@ -1,0 +1,301 @@
+name: Verify crDroid r547379 Against Official AOSP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-aosp-r547379:
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ============================================================
+      # 1. DOWNLOAD CRDROID CLANG R547379
+      # ============================================================
+      - name: Download crDroid Clang r547379
+        run: |
+          set -e
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            crdroid-clang
+
+      # ============================================================
+      # 2. DOWNLOAD OFFICIAL AOSP CLANG R547379
+      # ============================================================
+      - name: Download Official AOSP Clang r547379
+        run: |
+          set -e
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86.git \
+            aosp-clang
+
+      # ============================================================
+      # 3. VERIFY VERSIONS
+      # ============================================================
+      - name: Verify Versions
+        run: |
+          set -e
+          echo "========================================"
+          echo "CRDROID CLANG VERSION"
+          echo "========================================"
+          crdroid-clang/bin/clang-20 --version
+          echo
+          echo "========================================"
+          echo "AOSP R547379 CLANG VERSION"
+          echo "========================================"
+          aosp-clang/clang-r547379/bin/clang-20 --version
+
+      # ============================================================
+      # 4. VERIFY AOSP BUILD INFO
+      # ============================================================
+      - name: Verify AOSP Build Information
+        run: |
+          set -e
+          echo "========================================"
+          echo "AOSP R547379 BUILD INFO"
+          echo "========================================"
+          cat aosp-clang/clang-r547379/BUILD_INFO
+          echo
+          echo "========================================"
+          echo "AOSP MANIFEST"
+          echo "========================================"
+          ls -lh aosp-clang/clang-r547379/manifest_13174946.xml
+
+      # ============================================================
+      # 5. CALCULATE SHA256
+      # ============================================================
+      - name: Calculate SHA256
+        run: |
+          set -e
+          echo "========================================"
+          echo "SHA256 COMPARISON"
+          echo "========================================"
+          CRDROID_BIN="crdroid-clang/bin/clang-20"
+          AOSP_BIN="aosp-clang/clang-r547379/bin/clang-20"
+          echo
+          echo "----- crDroid clang-20 -----"
+          sha256sum "$CRDROID_BIN"
+          echo
+          echo "----- AOSP clang-20 -----"
+          sha256sum "$AOSP_BIN"
+          echo
+          echo "----- SHA256 values -----"
+          CRDROID_SHA256="$(sha256sum "$CRDROID_BIN" | awk '{print $1}')"
+          AOSP_SHA256="$(sha256sum "$AOSP_BIN" | awk '{print $1}')"
+          echo "crDroid SHA256:"
+          echo "$CRDROID_SHA256"
+          echo
+          echo "AOSP SHA256:"
+          echo "$AOSP_SHA256"
+          echo
+          echo "----- Comparison -----"
+          if [ "$CRDROID_SHA256" = "$AOSP_SHA256" ]; then
+            echo "[MATCH] crDroid clang-20 is byte-for-byte identical to AOSP clang-20"
+          else
+            echo "[DIFFERENT] crDroid clang-20 differs from AOSP clang-20"
+          fi
+
+      # ============================================================
+      # 6. COMPARE FILE SIZE
+      # ============================================================
+      - name: Compare Binary Size
+        run: |
+          set -e
+          echo "========================================"
+          echo "BINARY SIZE COMPARISON"
+          echo "========================================"
+          CRDROID_BIN="crdroid-clang/bin/clang-20"
+          AOSP_BIN="aosp-clang/clang-r547379/bin/clang-20"
+          echo
+          echo "----- crDroid -----"
+          stat -c '%n %s bytes' "$CRDROID_BIN"
+          echo
+          echo "----- AOSP -----"
+          stat -c '%n %s bytes' "$AOSP_BIN"
+          echo
+          echo "----- cmp -----"
+          if cmp -s "$CRDROID_BIN" "$AOSP_BIN"; then
+            echo "[IDENTICAL] Binary files are identical"
+          else
+            echo "[DIFFERENT] Binary files are different"
+          fi
+
+      # ============================================================
+      # 7. VERIFY MLGO IN CRDROID
+      # ============================================================
+      - name: Verify MLGO In crDroid
+        run: |
+          set -e
+          echo "========================================"
+          echo "CRDROID MLGO"
+          echo "========================================"
+          BIN="crdroid-clang/bin/clang-20"
+          strings -a "$BIN" \
+            | grep -Ei 'MLGO|mlgo|regalloc.*evict|regalloc.*advisor' \
+            | sort -u \
+            | tee /tmp/crdroid-mlgo.txt \
+            || true
+
+      # ============================================================
+      # 8. VERIFY MLGO IN AOSP
+      # ============================================================
+      - name: Verify MLGO In AOSP
+        run: |
+          set -e
+          echo "========================================"
+          echo "AOSP MLGO"
+          echo "========================================"
+          BIN="aosp-clang/clang-r547379/bin/clang-20"
+          strings -a "$BIN" \
+            | grep -Ei 'MLGO|mlgo|regalloc.*evict|regalloc.*advisor' \
+            | sort -u \
+            | tee /tmp/aosp-mlgo.txt \
+            || true
+
+      # ============================================================
+      # 9. VERIFY AARCH64 MLGO MODEL IN AOSP
+      # ============================================================
+      - name: Verify AArch64 MLGO Model In AOSP
+        run: |
+          set -e
+          echo "========================================"
+          echo "AARCH64 MLGO MODEL"
+          echo "========================================"
+          MODEL_DIR="aosp-clang/mlgo-models/arm64/regalloc-evict-aosp"
+          if [ -d "$MODEL_DIR" ]; then
+            echo "[FOUND] AArch64 RegAlloc MLGO model directory"
+            echo
+            echo "----- Model files -----"
+            find "$MODEL_DIR" -type f -print | sort
+          else
+            echo "[NOT FOUND] AArch64 RegAlloc MLGO model directory"
+          fi
+
+      # ============================================================
+      # 10. VERIFY MODEL FILES
+      # ============================================================
+      - name: Verify AArch64 MLGO Model Files
+        run: |
+          set -e
+          echo "========================================"
+          echo "AARCH64 MLGO MODEL FILES"
+          echo "========================================"
+          MODEL_DIR="aosp-clang/mlgo-models/arm64/regalloc-evict-aosp"
+          for FILE in fingerprint.pb model.tflite saved_model.pb; do
+            if [ -f "$MODEL_DIR/$FILE" ]; then
+              echo "[FOUND] $FILE"
+              sha256sum "$MODEL_DIR/$FILE"
+            else
+              echo "[MISSING] $FILE"
+            fi
+          done
+
+      # ============================================================
+      # 11. TEST CRDROID RELEASE ADVISOR
+      # ============================================================
+      - name: Test crDroid Release Advisor
+        run: |
+          set -e
+          echo "========================================"
+          echo "CRDROID RELEASE ADVISOR TEST"
+          echo "========================================"
+          cat > /tmp/mlgo_test.c <<'EOF'
+          __attribute__((noinline)) long mlgo_test(
+              long a, long b, long c, long d, long e, long f,
+              long g, long h, long i, long j, long k, long l) {
+            long r0 = a + b;
+            long r1 = c + d;
+            long r2 = e + f;
+            long r3 = g + h;
+            long r4 = i + j;
+            long r5 = k + l;
+            long r6 = r0 * r1;
+            long r7 = r2 * r3;
+            long r8 = r4 * r5;
+            long r9 = r6 + r7;
+            long r10 = r8 + r0;
+            long r11 = r9 * r10;
+            return r11 + r6 + r7 + r8 + r1 + r2 + r3;
+          }
+          EOF
+          crdroid-clang/bin/clang-20 \
+            -target aarch64-linux-android \
+            -O2 \
+            -S \
+            /tmp/mlgo_test.c \
+            -o /tmp/crdroid-release.s \
+            -mllvm -regalloc-enable-advisor=release \
+            2>&1 | tee /tmp/crdroid-release.log
+          echo
+          echo "----- Check fallback -----"
+          if grep -Fq "Requested regalloc eviction advisor analysis could not be created. Using default" \
+              /tmp/crdroid-release.log; then
+            echo "[FALLBACK] crDroid Release advisor fell back to default"
+          else
+            echo "[NO FALLBACK] crDroid Release advisor did not report fallback"
+          fi
+
+      # ============================================================
+      # 12. FINAL RESULT
+      # ============================================================
+      - name: Final Result
+        run: |
+          echo "========================================"
+          echo "FINAL AOSP / CRDROID MLGO RESULT"
+          echo "========================================"
+          CRDROID_BIN="crdroid-clang/bin/clang-20"
+          AOSP_BIN="aosp-clang/clang-r547379/bin/clang-20"
+          CRDROID_SHA256="$(sha256sum "$CRDROID_BIN" | awk '{print $1}')"
+          AOSP_SHA256="$(sha256sum "$AOSP_BIN" | awk '{print $1}')"
+          echo
+          echo "1. crDroid SHA256"
+          echo "$CRDROID_SHA256"
+          echo
+          echo "2. AOSP SHA256"
+          echo "$AOSP_SHA256"
+          echo
+          echo "3. Binary identity"
+          if [ "$CRDROID_SHA256" = "$AOSP_SHA256" ]; then
+            echo "[CONFIRMED] crDroid clang-20 == official AOSP clang-20"
+          else
+            echo "[NOT IDENTICAL] crDroid clang-20 != official AOSP clang-20"
+          fi
+          echo
+          echo "4. AArch64 MLGO model"
+          if [ -f aosp-clang/mlgo-models/arm64/regalloc-evict-aosp/model.tflite ]; then
+            echo "[FOUND] AOSP AArch64 RegAlloc MLGO model"
+          else
+            echo "[NOT FOUND] AOSP AArch64 RegAlloc MLGO model"
+          fi
+          echo
+          echo "5. crDroid Release advisor"
+          if grep -Fq "Requested regalloc eviction advisor analysis could not be created. Using default" \
+              /tmp/crdroid-release.log; then
+            echo "[FALLBACK] Release advisor fell back to default"
+          else
+            echo "[NO FALLBACK] Release advisor did not report fallback"
+          fi
+          echo
+          echo "========================================"
+          echo "INTERPRETATION"
+          echo "========================================"
+          echo "If SHA256 values MATCH:"
+          echo "The crDroid clang-20 binary is byte-for-byte identical to AOSP."
+          echo "Therefore the AOSP r547379 binary's embedded MLGO configuration"
+          echo "applies directly to the crDroid binary."
+          echo
+          echo "If SHA256 values DIFFER:"
+          echo "The crDroid binary is not byte-for-byte identical to AOSP."
+          echo "Further binary-level inspection is required."
+
+      # ============================================================
+      # 13. UPLOAD EVIDENCE
+      # ============================================================
+      - name: Upload Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aosp-crdroid-r547379-mlgo-evidence
+          path: |
+            /tmp/crdroid-mlgo.txt
+            /tmp/aosp-mlgo.txt
+            /tmp/crdroid-release.log
+            /tmp/crdroid-release.s
