@@ -117,18 +117,6 @@ jobs:
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        scripts/config \
-          --file out/.config \
-          --disable CONFIG_LTO \
-          --disable CONFIG_THINLTO \
-          --disable CONFIG_LTO_CLANG \
-          --disable CONFIG_POLLY_CLANG \
-          --disable CONFIG_POLLY_DCE \
-          --disable CONFIG_LD_DEAD_CODE_DATA_ELIMINATION \
-          --disable CONFIG_KSU \
-          --disable CONFIG_KSU_SUSFS \
-          --disable CONFIG_NOMOUNT
-
         if [ "${{ matrix.mlgo }}" = "with" ]; then
           scripts/config \
             --file out/.config \
@@ -149,40 +137,32 @@ jobs:
           'CONFIG_(LTO|THINLTO|LTO_CLANG|POLLY_CLANG|POLLY_DCE|LD_DEAD_CODE_DATA_ELIMINATION|KSU|KSU_SUSFS|NOMOUNT|MLGO_CLANG)=' \
           out/.config || true
 
-    - name: Verify Final Configuration
+    - name: Verify MLGO Configuration
       run: |
         set -e
 
-        echo "=== FINAL CONFIGURATION CHECK ==="
-
-        for CONFIG in \
-          CONFIG_LTO \
-          CONFIG_THINLTO \
-          CONFIG_LTO_CLANG \
-          CONFIG_POLLY_CLANG \
-          CONFIG_POLLY_DCE \
-          CONFIG_LD_DEAD_CODE_DATA_ELIMINATION \
-          CONFIG_KSU \
-          CONFIG_KSU_SUSFS \
-          CONFIG_NOMOUNT
-        do
-          if grep -q "^${CONFIG}=y" out/.config; then
-            echo "[ERROR] ${CONFIG}=y"
-            exit 1
-          else
-            echo "[OK] ${CONFIG}=n"
-          fi
-        done
+        echo "========================================"
+        echo "MLGO CONFIGURATION CHECK"
+        echo "========================================"
 
         if [ "${{ matrix.mlgo }}" = "with" ]; then
-          grep -q '^CONFIG_MLGO_CLANG=y' out/.config
-          echo "[OK] CONFIG_MLGO_CLANG=y"
-        else
+
           if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
-            echo "[ERROR] CONFIG_MLGO_CLANG=y"
+            echo "[OK] CONFIG_MLGO_CLANG=y"
+          else
+            echo "[ERROR] CONFIG_MLGO_CLANG is not enabled"
             exit 1
           fi
-          echo "[OK] CONFIG_MLGO_CLANG=n"
+
+        else
+
+          if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
+            echo "[ERROR] CONFIG_MLGO_CLANG=y in MLGO-OFF build"
+            exit 1
+          else
+            echo "[OK] CONFIG_MLGO_CLANG=n"
+          fi
+
         fi
 
     - name: Build Kernel with Bear
@@ -253,6 +233,7 @@ jobs:
           else
 
             echo "[OK] MLGO Release flag absent"
+
           fi
 
         fi
