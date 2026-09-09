@@ -1,0 +1,259 @@
+name: Build Kernel MLGO Only Matrix
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-22.04
+
+    defaults:
+      run:
+        working-directory: k
+
+    strategy:
+      fail-fast: false
+      matrix:
+        mlgo:
+          - without
+          - with
+
+    steps:
+
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        ref: 16
+        fetch-depth: 1
+        path: k
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          git \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          make \
+          zip \
+          unzip \
+          curl \
+          wget \
+          libelf-dev \
+          libncurses-dev \
+          python3 \
+          openjdk-17-jre-headless
+
+    - name: Clone LineageOS Toolchains
+      run: |
+        set -e
+        rm -rf clang gcc64 gcc32
+
+        git clone --depth=1 \
+          https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+          clang
+
+        git clone --depth=1 \
+          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+          gcc64
+
+        git clone --depth=1 \
+          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+          gcc32
+
+    - name: Setup Environment
+      run: |
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
+        echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
+        echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+    - name: Verify toolchains
+      run: |
+        set -e
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        which clang
+        clang --version
+
+        which ld.lld
+        ld.lld --version
+
+        which llvm-ar
+        which llvm-nm
+        which llvm-objcopy
+        which llvm-objdump
+        which llvm-strip
+
+    - name: Load Original violet-perf defconfig
+      run: |
+        set -e
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        make O=out ARCH=arm64 vendor/violet-perf_defconfig
+
+        test -f out/.config
+
+    - name: Configure Matrix
+      run: |
+        set -e
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        scripts/config \
+          --file out/.config \
+          --disable CONFIG_LTO \
+          --disable CONFIG_THINLTO \
+          --disable CONFIG_LTO_CLANG \
+          --disable CONFIG_POLLY_CLANG \
+          --disable CONFIG_POLLY_DCE \
+          --disable CONFIG_LD_DEAD_CODE_DATA_ELIMINATION \
+          --disable CONFIG_KSU \
+          --disable CONFIG_KSU_SUSFS \
+          --disable CONFIG_NOMOUNT
+
+        if [ "${{ matrix.mlgo }}" = "with" ]; then
+          scripts/config \
+            --file out/.config \
+            --enable CONFIG_MLGO_CLANG
+        else
+          scripts/config \
+            --file out/.config \
+            --disable CONFIG_MLGO_CLANG
+        fi
+
+        make O=out ARCH=arm64 olddefconfig
+
+        echo "========================================"
+        echo "MLGO MODE: ${{ matrix.mlgo }}"
+        echo "========================================"
+
+        grep -E \
+          'CONFIG_(LTO|THINLTO|LTO_CLANG|POLLY_CLANG|POLLY_DCE|LD_DEAD_CODE_DATA_ELIMINATION|KSU|KSU_SUSFS|NOMOUNT|MLGO_CLANG)=' \
+          out/.config || true
+
+    - name: Verify Final Configuration
+      run: |
+        set -e
+
+        echo "=== FINAL CONFIGURATION CHECK ==="
+
+        for CONFIG in \
+          CONFIG_LTO \
+          CONFIG_THINLTO \
+          CONFIG_LTO_CLANG \
+          CONFIG_POLLY_CLANG \
+          CONFIG_POLLY_DCE \
+          CONFIG_LD_DEAD_CODE_DATA_ELIMINATION \
+          CONFIG_KSU \
+          CONFIG_KSU_SUSFS \
+          CONFIG_NOMOUNT
+        do
+          if grep -q "^${CONFIG}=y" out/.config; then
+            echo "[ERROR] ${CONFIG}=y"
+            exit 1
+          else
+            echo "[OK] ${CONFIG}=n"
+          fi
+        done
+
+        if [ "${{ matrix.mlgo }}" = "with" ]; then
+          grep -q '^CONFIG_MLGO_CLANG=y' out/.config
+          echo "[OK] CONFIG_MLGO_CLANG=y"
+        else
+          if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
+            echo "[ERROR] CONFIG_MLGO_CLANG=y"
+            exit 1
+          fi
+          echo "[OK] CONFIG_MLGO_CLANG=n"
+        fi
+
+    - name: Verify MLGO Kernel Integration
+      if: matrix.mlgo == 'with'
+      run: |
+        set -e
+
+        echo "=== KERNEL MLGO MAKEFILE ==="
+
+        grep -n \
+          "regalloc-enable-advisor" \
+          Makefile
+
+        grep -n \
+          "CONFIG_MLGO_CLANG" \
+          Makefile
+
+    - name: Build Kernel
+      run: |
+        set -e
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          AS=llvm-as \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE="$CROSS_COMPILE" \
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+          CLANG_TRIPLE="$CLANG_TRIPLE" \
+          2>&1 | tee build.log
+
+    - name: Verify MLGO Build Flag
+      if: matrix.mlgo == 'with'
+      run: |
+        set -e
+
+        echo "=== SEARCHING FOR MLGO RELEASE FLAG ==="
+
+        if grep -R \
+          -- "-mllvm -regalloc-enable-advisor=release" \
+          out 2>/dev/null; then
+          echo "[OK] MLGO Release flag detected"
+        else
+          echo "[INFO] MLGO flag is supplied through the kernel Makefile"
+          grep -n "regalloc-enable-advisor" Makefile
+        fi
+
+    - name: Measure vmlinux
+      run: |
+        set -e
+
+        test -f out/vmlinux
+
+        SIZE=$(stat -c '%s' out/vmlinux)
+
+        echo "========================================"
+        echo "MLGO MODE: ${{ matrix.mlgo }}"
+        echo "vmlinux size: $SIZE bytes"
+        echo "========================================"
+
+        echo "VMLINUX_SIZE=$SIZE" >> "$GITHUB_ENV"
+
+    - name: Save vmlinux size
+      run: |
+        echo "MLGO=${{ matrix.mlgo }}" > vmlinux-size.txt
+        echo "SIZE=$(stat -c '%s' out/vmlinux)" >> vmlinux-size.txt
+
+    - name: Upload vmlinux size
+      uses: actions/upload-artifact@v4
+      with:
+        name: vmlinux-size-${{ matrix.mlgo }}
+        path: k/vmlinux-size.txt
