@@ -172,26 +172,25 @@ jobs:
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         rm -f compile_commands.json
-        rm -f bear-build.log
         rm -f build.log
 
-        bear -- make -j$(nproc --all) \
-          O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          CROSS_COMPILE="$CROSS_COMPILE" \
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-          CLANG_TRIPLE="$CLANG_TRIPLE" \
-          2>&1 | tee build.log
+        bear --output compile_commands.json -- \
+          make -j$(nproc --all) \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE"
 
         test -f compile_commands.json
 
@@ -202,24 +201,35 @@ jobs:
         with open("compile_commands.json", "r", encoding="utf-8") as f:
             commands = json.load(f)
 
-        with open("bear-build.log", "w", encoding="utf-8") as f:
+        with open("build.log", "w", encoding="utf-8") as log:
+
             for entry in commands:
 
                 arguments = entry.get("arguments")
 
                 if arguments:
-                    f.write(shlex.join(arguments))
-                    f.write("\n")
+                    command = shlex.join(arguments)
+                else:
+                    command = entry.get("command", "")
+
+                if not command:
                     continue
 
-                command = entry.get("command")
+                if "/clang/bin/clang" not in command:
+                    continue
 
-                if command:
-                    f.write(command)
-                    f.write("\n")
+                log.write(command)
+                log.write("\n")
         PY
 
-        test -f bear-build.log
+        test -f build.log
+
+        echo "========================================"
+        echo "FULL CLANG BUILD LOG"
+        echo "========================================"
+
+        wc -l build.log
+        ls -lh build.log
 
     - name: Verify MLGO Flag from build.log
       run: |
@@ -231,42 +241,12 @@ jobs:
 
         TARGET="-mllvm -regalloc-enable-advisor=release"
 
-        python3 - <<'PY'
-        import json
-        import shlex
-
-        with open("compile_commands.json", "r", encoding="utf-8") as f:
-            commands = json.load(f)
-
-        with open("build.log", "a", encoding="utf-8") as log:
-
-            log.write("\n")
-            log.write("========================================\n")
-            log.write("BEAR CLANG COMMANDS\n")
-            log.write("========================================\n")
-
-            for entry in commands:
-
-                arguments = entry.get("arguments")
-
-                if arguments:
-                    log.write(shlex.join(arguments))
-                    log.write("\n")
-                    continue
-
-                command = entry.get("command")
-
-                if command:
-                    log.write(command)
-                    log.write("\n")
-        PY
-
         if [ "${{ matrix.mlgo }}" = "with" ]; then
 
           if grep -Fq -- "$TARGET" build.log; then
             echo "[OK] MLGO Release flag found in build.log"
             echo
-            echo "=== MLGO MATCH ==="
+            echo "=== MLGO CLANG COMMANDS ==="
             grep -Fn -- "$TARGET" build.log
           else
             echo "[ERROR] MLGO Release flag NOT found in build.log"
@@ -278,7 +258,7 @@ jobs:
           if grep -Fq -- "$TARGET" build.log; then
             echo "[ERROR] MLGO Release flag found in MLGO-OFF build.log"
             echo
-            echo "=== UNEXPECTED MLGO MATCH ==="
+            echo "=== UNEXPECTED MLGO COMMANDS ==="
             grep -Fn -- "$TARGET" build.log
             exit 1
           else
@@ -296,7 +276,7 @@ jobs:
         echo "========================================"
 
         grep -Ein \
-          '(^|[[:space:]])(-flto|-mllvm|.*polly.*|.*mlgo.*|.*regalloc.*|.*dead.?code.*)' \
+          '(-flto|-mllvm|polly|mlgo|regalloc|dead.?code)' \
           build.log || true
 
         echo "========================================"
@@ -325,6 +305,5 @@ jobs:
         name: mlgo-evidence-${{ matrix.mlgo }}
         path: |
           k/compile_commands.json
-          k/bear-build.log
           k/build.log
           k/vmlinux-size.txt
