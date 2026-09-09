@@ -54,6 +54,7 @@ jobs:
     - name: Clone LineageOS Toolchains
       run: |
         set -e
+
         rm -rf clang gcc64 gcc32
 
         git clone --depth=1 \
@@ -165,7 +166,7 @@ jobs:
 
         fi
 
-    - name: Build Kernel with Bear
+    - name: Build Kernel V=1 with Bear
       run: |
         set -e
 
@@ -174,8 +175,13 @@ jobs:
         rm -f compile_commands.json
         rm -f build.log
 
+        echo "========================================" > build.log
+        echo "FULL V=1 BUILD LOG" >> build.log
+        echo "MLGO MODE: ${{ matrix.mlgo }}" >> build.log
+        echo "========================================" >> build.log
+
         bear --output compile_commands.json -- \
-          make -j$(nproc --all) \
+          make V=1 -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
             LLVM=1 \
@@ -190,53 +196,28 @@ jobs:
             STRIP=llvm-strip \
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE"
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            >> build.log 2>&1
 
         test -f compile_commands.json
-
-        python3 - <<'PY'
-        import json
-        import shlex
-
-        with open("compile_commands.json", "r", encoding="utf-8") as f:
-            commands = json.load(f)
-
-        with open("build.log", "w", encoding="utf-8") as log:
-
-            for entry in commands:
-
-                arguments = entry.get("arguments")
-
-                if arguments:
-                    command = shlex.join(arguments)
-                else:
-                    command = entry.get("command", "")
-
-                if not command:
-                    continue
-
-                if "/clang/bin/clang" not in command:
-                    continue
-
-                log.write(command)
-                log.write("\n")
-        PY
-
         test -f build.log
 
         echo "========================================"
-        echo "FULL CLANG BUILD LOG"
+        echo "BUILD FINISHED"
         echo "========================================"
 
-        wc -l build.log
+        echo "Build log:"
         ls -lh build.log
+
+        echo "Compile database:"
+        ls -lh compile_commands.json
 
     - name: Verify MLGO Flag from build.log
       run: |
         set -e
 
         echo "========================================"
-        echo "MLGO FLAG VERIFICATION"
+        echo "MLGO FLAG VERIFICATION FROM BUILD.LOG"
         echo "========================================"
 
         TARGET="-mllvm -regalloc-enable-advisor=release"
@@ -246,7 +227,7 @@ jobs:
           if grep -Fq -- "$TARGET" build.log; then
             echo "[OK] MLGO Release flag found in build.log"
             echo
-            echo "=== MLGO CLANG COMMANDS ==="
+            echo "=== MLGO MATCH ==="
             grep -Fn -- "$TARGET" build.log
           else
             echo "[ERROR] MLGO Release flag NOT found in build.log"
@@ -258,7 +239,7 @@ jobs:
           if grep -Fq -- "$TARGET" build.log; then
             echo "[ERROR] MLGO Release flag found in MLGO-OFF build.log"
             echo
-            echo "=== UNEXPECTED MLGO COMMANDS ==="
+            echo "=== UNEXPECTED MLGO MATCH ==="
             grep -Fn -- "$TARGET" build.log
             exit 1
           else
