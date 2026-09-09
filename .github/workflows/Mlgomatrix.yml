@@ -1,6 +1,9 @@
 name: Build Kernel MLGO Only Matrix
 
 on:
+  push:
+    branches:
+      - xxx-17
   workflow_dispatch:
 
 jobs:
