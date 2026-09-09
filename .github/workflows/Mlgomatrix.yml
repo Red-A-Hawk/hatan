@@ -172,8 +172,8 @@ jobs:
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         rm -f compile_commands.json
-        rm -f build.log
         rm -f bear-build.log
+        rm -f build.log
 
         bear -- make -j$(nproc --all) \
           O=out \
@@ -194,9 +194,6 @@ jobs:
           2>&1 | tee build.log
 
         test -f compile_commands.json
-
-        echo "=== COMPILE DATABASE ==="
-        ls -lh compile_commands.json
 
         python3 - <<'PY'
         import json
@@ -224,10 +221,7 @@ jobs:
 
         test -f bear-build.log
 
-        echo "=== BEAR BUILD LOG ==="
-        ls -lh bear-build.log
-
-    - name: Verify MLGO Flag from Bear
+    - name: Verify MLGO Flag from build.log
       run: |
         set -e
 
@@ -235,71 +229,65 @@ jobs:
         echo "MLGO FLAG VERIFICATION"
         echo "========================================"
 
+        TARGET="-mllvm -regalloc-enable-advisor=release"
+
         python3 - <<'PY'
         import json
         import shlex
-        import sys
 
         with open("compile_commands.json", "r", encoding="utf-8") as f:
             commands = json.load(f)
 
-        target = "-regalloc-enable-advisor=release"
+        with open("build.log", "a", encoding="utf-8") as log:
 
-        found = []
+            log.write("\n")
+            log.write("========================================\n")
+            log.write("BEAR CLANG COMMANDS\n")
+            log.write("========================================\n")
 
-        for entry in commands:
+            for entry in commands:
 
-            arguments = entry.get("arguments", [])
+                arguments = entry.get("arguments")
 
-            if arguments:
-                for i in range(len(arguments) - 1):
-                    if (
-                        arguments[i] == "-mllvm"
-                        and arguments[i + 1] == target
-                    ):
-                        found.append(
-                            shlex.join(arguments)
-                        )
-                        break
+                if arguments:
+                    log.write(shlex.join(arguments))
+                    log.write("\n")
+                    continue
 
-            command = entry.get("command", "")
+                command = entry.get("command")
 
-            if target in command:
-                found.append(command)
-
-        if "${{ matrix.mlgo }}" == "with":
-
-            if found:
-                print("[OK] MLGO Release flag found in compile_commands.json")
-                print()
-                print("=== MATCHING CLANG COMMANDS ===")
-
-                for command in found:
-                    print(command)
-                    print()
-
-            else:
-                print("[ERROR] MLGO Release flag NOT found in compile_commands.json")
-                sys.exit(1)
-
-        else:
-
-            if found:
-                print("[INFO] MLGO Release flag found in MLGO-OFF build")
-                print()
-                print("=== MATCHING COMMANDS ===")
-
-                for command in found:
-                    print(command)
-                    print()
-
-            else:
-                print("[OK] MLGO Release flag not found in MLGO-OFF build")
-                print("[INFO] Continuing build...")
-
+                if command:
+                    log.write(command)
+                    log.write("\n")
         PY
 
-    - name: Extract LTO Polly MLGO Flags
+        if [ "${{ matrix.mlgo }}" = "with" ]; then
+
+          if grep -Fq -- "$TARGET" build.log; then
+            echo "[OK] MLGO Release flag found in build.log"
+            echo
+            echo "=== MLGO MATCH ==="
+            grep -Fn -- "$TARGET" build.log
+          else
+            echo "[ERROR] MLGO Release flag NOT found in build.log"
+            exit 1
+          fi
+
+        else
+
+          if grep -Fq -- "$TARGET" build.log; then
+            echo "[ERROR] MLGO Release flag found in MLGO-OFF build.log"
+            echo
+            echo "=== UNEXPECTED MLGO MATCH ==="
+            grep -Fn -- "$TARGET" build.log
+            exit 1
+          else
+            echo "[OK] MLGO Release flag not found in MLGO-OFF build.log"
+          fi
+
+        fi
+
+    - name: Scan LTO Polly MLGO Flags
       run: |
         set -e
 
@@ -307,53 +295,9 @@ jobs:
         echo "LTO / THINLTO / POLLY / MLGO FLAG SCAN"
         echo "========================================"
 
-        python3 - <<'PY'
-        import json
-        import shlex
-
-        with open("compile_commands.json", "r", encoding="utf-8") as f:
-            commands = json.load(f)
-
-        keywords = (
-            "lto",
-            "thinlto",
-            "polly",
-            "mlgo",
-            "regalloc",
-            "dead-code",
-            "dead_code",
-        )
-
-        with open("bear-build.log", "a", encoding="utf-8") as log:
-            log.write("\n")
-            log.write("========================================\n")
-            log.write("LTO / THINLTO / POLLY / MLGO FLAG MATCHES\n")
-            log.write("========================================\n")
-
-            for entry in commands:
-
-                arguments = entry.get("arguments", [])
-
-                if not arguments:
-                    command = entry.get("command", "")
-
-                    if command:
-                        lower = command.lower()
-
-                        if any(keyword in lower for keyword in keywords):
-                            print(command)
-                            log.write(command + "\n")
-
-                    continue
-
-                command = shlex.join(arguments)
-                lower = command.lower()
-
-                if any(keyword in lower for keyword in keywords):
-                    print(command)
-                    log.write(command + "\n")
-
-        PY
+        grep -Ein \
+          '(^|[[:space:]])(-flto|-mllvm|.*polly.*|.*mlgo.*|.*regalloc.*|.*dead.?code.*)' \
+          build.log || true
 
         echo "========================================"
         echo "FLAG SCAN COMPLETE"
