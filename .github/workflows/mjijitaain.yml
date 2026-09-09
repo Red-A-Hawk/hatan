@@ -1,55 +1,38 @@
 name: Test MLGO Model A B C r547379
 
 on:
- workflow_dispatch:
+workflow_dispatch:
 
-  jobs:
-   test-mlgo-model:
-   runs-on: ubuntu-22.04
+jobs:
+test-mlgo-model:
+runs-on: ubuntu-22.04
 
-  steps:
-
-  # ============================================================
-  # 1. DOWNLOAD CLANG r547379
-  # ============================================================
+steps:
   - name: Download Clang r547379
     run: |
       git clone --depth=1 \
         https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
         clang-r547379
 
-  # ============================================================
-  # 2. VERIFY CLANG
-  # ============================================================
   - name: Verify Clang
     run: |
       echo "========================================"
       echo "CLANG VERSION"
       echo "========================================"
-
       clang-r547379/bin/clang-20 --version
 
       echo
       echo "========================================"
       echo "CLANG-20 FILE"
       echo "========================================"
-
       ls -lh clang-r547379/bin/clang-20
       file clang-r547379/bin/clang-20
 
-  # ============================================================
-  # 3. A - SEARCH EXTERNAL MLGO MODELS
-  # ============================================================
   - name: A - Search External MLGO Models
     run: |
       echo "========================================"
       echo "A - EXTERNAL MLGO MODEL SEARCH"
       echo "========================================"
-
-      FOUND=0
-
-      echo
-      echo "----- Known MLGO filenames -----"
 
       find clang-r547379 \
         -type f \
@@ -60,12 +43,7 @@ on:
           -o -iname "policy_specs.pbtxt" \
           -o -iname "*.tflite" \
         \
-        -print \
-        | tee /tmp/mlgo-model-files.txt
-
-      if [ -s /tmp/mlgo-model-files.txt ]; then
-        FOUND=1
-      fi
+        -print | tee /tmp/mlgo-model-files.txt
 
       echo
       echo "----- MLGO directories -----"
@@ -77,44 +55,31 @@ on:
           -o -iname "*regalloc*evict*" \
           -o -iname "*inlining*" \
         \
-        -print \
-        | tee /tmp/mlgo-model-dirs.txt
-
-      if [ -s /tmp/mlgo-model-dirs.txt ]; then
-        FOUND=1
-      fi
+        -print | tee /tmp/mlgo-model-dirs.txt
 
       echo
-      echo "----- MLGO path/content names -----"
+      echo "----- MLGO paths -----"
 
-      find clang-r547379 \
-        -print \
+      find clang-r547379 -print \
         | grep -Ei \
           'mlgo|regalloc.*evict|model\.tflite|saved_model|fingerprint|policy_specs' \
         | tee /tmp/mlgo-model-paths.txt \
         || true
 
-      if [ -s /tmp/mlgo-model-paths.txt ]; then
-        FOUND=1
-      fi
-
       echo
-      if [ "$FOUND" -eq 1 ]; then
+      echo "----- A RESULT -----"
+
+      if [ -s /tmp/mlgo-model-files.txt ] || [ -s /tmp/mlgo-model-dirs.txt ]; then
         echo "[A] EXTERNAL MLGO MODEL MATERIAL FOUND"
       else
         echo "[A] NO EXTERNAL MLGO MODEL FOUND"
       fi
 
-  # ============================================================
-  # 4. B - SEARCH EMBEDDED MLGO MODEL
-  # ============================================================
   - name: B - Search Embedded MLGO Model
     run: |
       echo "========================================"
       echo "B - EMBEDDED MLGO MODEL SEARCH"
       echo "========================================"
-
-      BINARY_FOUND=0
 
       mkdir -p /tmp/mlgo-binary-scan
 
@@ -126,46 +91,24 @@ on:
         > /tmp/mlgo-binary-list.txt
 
       while IFS= read -r BIN; do
-
         echo
         echo "----------------------------------------"
         echo "$BIN"
         echo "----------------------------------------"
 
         SAFE_NAME=$(echo "$BIN" | tr '/' '_')
-        STRINGS_FILE="/tmp/mlgo-binary-scan/${SAFE_NAME}.strings"
 
         strings -a "$BIN" \
-          > "$STRINGS_FILE" \
-          2>/dev/null \
-          || true
+          > "/tmp/mlgo-binary-scan/${SAFE_NAME}.strings" \
+          2>/dev/null || true
 
-        MATCHES=$(grep -Ei \
+        grep -Ei \
           'regalloc-evict-aosp|model\.tflite|saved_model\.pb|fingerprint\.pb|policy_specs\.pbtxt|mlgo-models|tensorflow|MLGO' \
-          "$STRINGS_FILE" \
-          || true)
-
-        if [ -n "$MATCHES" ]; then
-          echo "$MATCHES"
-          BINARY_FOUND=1
-        fi
+          "/tmp/mlgo-binary-scan/${SAFE_NAME}.strings" \
+          || true
 
       done < /tmp/mlgo-binary-list.txt
 
-      echo
-      echo "========================================"
-      echo "EMBEDDED MODEL SIGNATURE RESULT"
-      echo "========================================"
-
-      if [ "$BINARY_FOUND" -eq 1 ]; then
-        echo "[B] MLGO MODEL-RELATED DATA FOUND INSIDE BINARY"
-      else
-        echo "[B] NO KNOWN EMBEDDED MLGO MODEL SIGNATURE FOUND"
-      fi
-
-  # ============================================================
-  # 5. B - DEEP BINARY BYTE SCAN
-  # ============================================================
   - name: B - Deep Binary Byte Scan
     run: |
       echo "========================================"
@@ -175,7 +118,6 @@ on:
       FOUND=0
 
       while IFS= read -r BIN; do
-
         echo
         echo "----------------------------------------"
         echo "$BIN"
@@ -189,25 +131,21 @@ on:
 
           cat /tmp/mlgo-byte-match.txt
           FOUND=1
-
         fi
 
       done < /tmp/mlgo-binary-list.txt
 
       echo
       echo "========================================"
-      echo "DEEP BYTE SCAN RESULT"
+      echo "B RESULT"
       echo "========================================"
 
       if [ "$FOUND" -eq 1 ]; then
-        echo "[B] KNOWN MLGO MODEL SIGNATURE FOUND IN BINARY"
+        echo "[B] KNOWN EMBEDDED MLGO MODEL SIGNATURE FOUND"
       else
-        echo "[B] NO KNOWN MLGO MODEL SIGNATURE FOUND"
+        echo "[B] NO KNOWN EMBEDDED MLGO MODEL SIGNATURE FOUND"
       fi
 
-  # ============================================================
-  # 6. B - ELF SECTION ANALYSIS
-  # ============================================================
   - name: B - ELF Section Analysis
     run: |
       echo "========================================"
@@ -215,27 +153,19 @@ on:
       echo "========================================"
 
       while IFS= read -r BIN; do
-
         if file "$BIN" | grep -q ELF; then
-
           echo
           echo "----------------------------------------"
           echo "$BIN"
           echo "----------------------------------------"
 
-          readelf -S "$BIN" \
-            2>/dev/null \
+          readelf -S "$BIN" 2>/dev/null \
             | grep -Ei \
               'mlgo|model|tensorflow|tflite|rodata|llvm' \
             || true
-
         fi
-
       done < /tmp/mlgo-binary-list.txt
 
-  # ============================================================
-  # 7. C - VERIFY MLGO RUNTIME
-  # ============================================================
   - name: C - Verify MLGO Runtime
     run: |
       echo "========================================"
@@ -262,9 +192,6 @@ on:
 
       echo "[C] regalloc-enable-advisor=release accepted"
 
-  # ============================================================
-  # 8. MLGO ADVISOR DIAGNOSTIC
-  # ============================================================
   - name: MLGO Advisor Diagnostic
     run: |
       echo "========================================"
@@ -275,25 +202,11 @@ on:
         -target aarch64-linux-gnu \
         -O2 \
         -mllvm -regalloc-evict=release \
-        -mllvm -debug-only=regalloc-evict \
         -c /dev/null \
         -x c \
         -o /tmp/mlgo-debug.o \
-        2>&1 \
-        | tee /tmp/mlgo-advisor.log \
-        || true
+        2>&1 | tee /tmp/mlgo-advisor.log
 
-      echo
-      echo "----- Advisor messages -----"
-
-      grep -Ei \
-        'regalloc|evict|advisor|model|mlgo|default|release|development' \
-        /tmp/mlgo-advisor.log \
-        || true
-
-  # ============================================================
-  # 9. FINAL A/B/C CLASSIFICATION
-  # ============================================================
   - name: Final A B C Classification
     run: |
       echo
@@ -335,33 +248,23 @@ on:
 
       echo
       echo "=========================================="
-      echo "INTERPRETATION"
+      echo "FINAL INTERPRETATION"
       echo "=========================================="
 
-      if [ -s /tmp/mlgo-model-files.txt ] \
-        || [ -s /tmp/mlgo-model-dirs.txt ]; then
-
-        echo "[A] EXTERNAL MODEL DETECTED"
-        echo "The toolchain contains identifiable MLGO model files/directories."
+      if [ -s /tmp/mlgo-model-files.txt ] || [ -s /tmp/mlgo-model-dirs.txt ]; then
+        echo "[A] EXTERNAL MLGO MODEL DETECTED"
 
       elif grep -RqiE \
         'regalloc-evict-aosp|model\.tflite|saved_model\.pb|policy_specs\.pbtxt|fingerprint\.pb|mlgo-models' \
         /tmp/mlgo-binary-scan \
         2>/dev/null; then
 
-        echo "[B] EMBEDDED MODEL SIGNATURE DETECTED"
-        echo "MLGO model-related data was found inside a binary."
+        echo "[B] EMBEDDED MLGO MODEL SIGNATURE DETECTED"
 
       else
-
-        echo "[C] NO DETECTABLE MODEL"
-        echo "MLGO runtime/options exist, but no external or known embedded model was detected."
-
+        echo "[C] MLGO RUNTIME PRESENT, BUT NO DETECTABLE MODEL FOUND"
       fi
 
-  # ============================================================
-  # 10. UPLOAD COMPLETE DIAGNOSTIC
-  # ============================================================
   - name: Upload MLGO A B C Diagnostic
     uses: actions/upload-artifact@v4
     with:
