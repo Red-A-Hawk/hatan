@@ -1,0 +1,334 @@
+name: Inspect MLGO Regalloc r547379 v99
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect-mlgo:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT CLANG r547379
+      # ============================================================
+      - name: Checkout Clang r547379
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang-r547379
+
+      # ============================================================
+      # 2. BASIC INFORMATION
+      # ============================================================
+      - name: Basic Clang Information
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "CLANG r547379 BASIC INFORMATION"
+            echo "========================================"
+
+            echo
+            echo "----- clang --version -----"
+            ./bin/clang-20 --version 2>&1 || true
+
+            echo
+            echo "----- llvm-config -----"
+            ./bin/llvm-config --version 2>&1 || true
+
+            echo
+            echo "----- BUILD_INFO -----"
+            cat BUILD_INFO 2>/dev/null || true
+
+            echo
+            echo "----- AndroidVersion.txt -----"
+            cat AndroidVersion.txt 2>/dev/null || true
+
+            echo
+            echo "----- clang_source_info.md -----"
+            cat clang_source_info.md 2>/dev/null || true
+
+          } | tee ../basic-info.txt
+
+      # ============================================================
+      # 3. ALL REGALLOC / MLGO FLAGS
+      # ============================================================
+      - name: Inspect MLGO Regalloc Flags
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "MLGO REGALLOC FLAGS"
+            echo "========================================"
+
+            echo
+            echo "----- clang -mllvm --help-hidden -----"
+            ./bin/clang-20 -mllvm --help-hidden 2>&1 \
+              | grep -Ei \
+              'regalloc|mlgo|ml-inliner|evict|advisor|model' \
+              || true
+
+            echo
+            echo "----- clang -cc1 -mllvm --help-hidden -----"
+            ./bin/clang-20 -cc1 -mllvm --help-hidden 2>&1 \
+              | grep -Ei \
+              'regalloc|mlgo|ml-inliner|evict|advisor|model' \
+              || true
+
+          } | tee ../mlgo-regalloc-flags.txt
+
+      # ============================================================
+      # 4. TEST EXACT REGALLOC FLAGS
+      # ============================================================
+      - name: Test Regalloc MLGO Options
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "REGALLOC MLGO OPTION TEST"
+            echo "========================================"
+
+            echo
+            echo "----- Test regalloc-evict=release -----"
+            ./bin/clang-20 \
+              -O2 \
+              -target aarch64-linux-android \
+              -mllvm -regalloc-evict=release \
+              -x c \
+              -c /dev/null \
+              -o /tmp/mlgo-test.o \
+              2>&1 || true
+
+            echo
+            echo "----- Test regalloc-enable-advisor=release -----"
+            ./bin/clang-20 \
+              -O2 \
+              -target aarch64-linux-android \
+              -mllvm -regalloc-enable-advisor=release \
+              -x c \
+              -c /dev/null \
+              -o /tmp/mlgo-test-advisor.o \
+              2>&1 || true
+
+          } | tee ../mlgo-option-test.txt
+
+      # ============================================================
+      # 5. SEARCH MLGO MODELS
+      # ============================================================
+      - name: Search MLGO Models
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "MLGO MODEL SEARCH"
+            echo "========================================"
+
+            echo
+            echo "----- MLGO Named Files -----"
+            find . -type f \
+              \( \
+                -iname '*mlgo*' \
+                -o -iname '*model.tflite' \
+                -o -iname 'saved_model.pb' \
+                -o -iname 'fingerprint.pb' \
+                -o -iname 'output_spec.json' \
+                -o -iname 'policy_specs.pbtxt' \
+              \) \
+              -print 2>/dev/null || true
+
+            echo
+            echo "----- MLGO Directories -----"
+            find . -type d \
+              \( \
+                -iname '*mlgo*' \
+                -o -iname '*regalloc*' \
+                -o -iname '*inlining*' \
+              \) \
+              -print 2>/dev/null || true
+
+          } | tee ../mlgo-model-search.txt
+
+      # ============================================================
+      # 6. SEARCH MLGO STRINGS IN ALL LLVM BINARIES
+      # ============================================================
+      - name: Deep MLGO Binary Scan
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "DEEP MLGO BINARY SCAN"
+            echo "========================================"
+
+            find bin -maxdepth 1 -type f -executable -print | sort | while read -r binary; do
+
+              echo
+              echo "----------------------------------------"
+              echo "$binary"
+              echo "----------------------------------------"
+
+              strings "$binary" 2>/dev/null \
+                | grep -Ei \
+                'MLGO|MLInlineAdvisor|ml-inliner|regalloc-evict|regalloc.*advisor|model.tflite|saved_model|policy_specs|output_spec|fingerprint' \
+                | sort -u \
+                || true
+
+            done
+
+          } | tee ../deep-mlgo-binary-scan.txt
+
+      # ============================================================
+      # 7. SEARCH FOR MODEL PATHS / MLGO REFERENCES
+      # ============================================================
+      - name: Search MLGO Paths And References
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "MLGO PATH / REFERENCE SEARCH"
+            echo "========================================"
+
+            echo
+            echo "----- MLGO / Regalloc strings -----"
+            grep -RIna \
+              -E \
+              'mlgo|regalloc-evict|regalloc.*advisor|model.tflite|saved_model|policy_specs|output_spec|fingerprint' \
+              . \
+              --exclude='*.a' \
+              --exclude='*.o' \
+              2>/dev/null \
+              | head -n 1000 \
+              || true
+
+            echo
+            echo "----- Strings from clang-20 -----"
+            strings ./bin/clang-20 2>/dev/null \
+              | grep -Ei \
+              'mlgo|regalloc-evict|advisor|model|tflite|saved_model|policy_specs|output_spec|fingerprint' \
+              | sort -u \
+              || true
+
+          } | tee ../mlgo-path-reference-search.txt
+
+      # ============================================================
+      # 8. LLVM CONFIGURATION / FEATURES
+      # ============================================================
+      - name: Inspect LLVM MLGO Features
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "LLVM MLGO FEATURES"
+            echo "========================================"
+
+            echo
+            echo "----- LLVM libraries -----"
+            find lib -maxdepth 2 -type f 2>/dev/null \
+              | grep -Ei 'MLGO|RegAlloc|LLVM' \
+              | sort \
+              || true
+
+            echo
+            echo "----- MLGO / Regalloc symbols -----"
+            nm -D ./bin/clang-20 2>/dev/null \
+              | grep -Ei 'mlgo|regalloc|evict|advisor' \
+              | head -n 500 \
+              || true
+
+          } | tee ../mlgo-features.txt
+
+      # ============================================================
+      # 9. COMPILER INVOCATION TRACE
+      # ============================================================
+      - name: Trace MLGO Compiler Invocation
+        run: |
+          set -e
+
+          cd clang-r547379
+
+          {
+            echo "========================================"
+            echo "MLGO COMPILER INVOCATION TRACE"
+            echo "========================================"
+
+            echo
+            echo "----- -### with regalloc-evict -----"
+            ./bin/clang-20 \
+              -target aarch64-linux-android \
+              -O2 \
+              -mllvm -regalloc-evict=release \
+              -### \
+              -x c \
+              -c /dev/null \
+              2>&1 || true
+
+            echo
+            echo "----- -### with regalloc-enable-advisor -----"
+            ./bin/clang-20 \
+              -target aarch64-linux-android \
+              -O2 \
+              -mllvm -regalloc-enable-advisor=release \
+              -### \
+              -x c \
+              -c /dev/null \
+              2>&1 || true
+
+          } | tee ../mlgo-invocation-trace.txt
+
+      # ============================================================
+      # 10. FINAL REPORT
+      # ============================================================
+      - name: Create Final MLGO Report
+        run: |
+          set -e
+
+          tar -czf mlgo-r547379-full-report.tar.gz \
+            basic-info.txt \
+            mlgo-regalloc-flags.txt \
+            mlgo-option-test.txt \
+            mlgo-model-search.txt \
+            deep-mlgo-binary-scan.txt \
+            mlgo-path-reference-search.txt \
+            mlgo-features.txt \
+            mlgo-invocation-trace.txt
+
+          echo
+          echo "========================================"
+          echo "FINAL REPORT"
+          echo "========================================"
+
+          ls -lh mlgo-r547379-full-report.tar.gz
+
+      # ============================================================
+      # 11. UPLOAD REPORT ONLY
+      # ============================================================
+      - name: Upload MLGO Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlgo-r547379-full-report
+          path: mlgo-r547379-full-report.tar.gz
+          retention-days: 30
