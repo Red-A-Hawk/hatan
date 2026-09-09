@@ -997,6 +997,10 @@ KBUILD_CFLAGS	+= -mllvm -polly-run-dce
 endif
 endif
 
+ifdef CONFIG_MLGO_CLANG
+KBUILD_CFLAGS += -mllvm -regalloc-enable-advisor=release
+endif
+
 ifdef CONFIG_CFI_CLANG
 cfi-clang-flags	+= -fsanitize=cfi -fno-sanitize-cfi-canonical-jump-tables \
 		   -fno-sanitize-blacklist
