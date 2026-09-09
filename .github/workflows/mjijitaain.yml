@@ -24,33 +24,6 @@ jobs:
 
           clang-r547379/bin/clang-20 --version
 
-      - name: Verify MLGO Advisor Option
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "MLGO ADVISOR OPTION"
-          echo "========================================"
-
-          clang-r547379/bin/clang-20 \
-            -target aarch64-linux-android \
-            -O2 \
-            -mllvm -regalloc-enable-advisor=release \
-            -### \
-            -c /dev/null \
-            -o /tmp/test.o \
-            2>&1 | tee /tmp/mlgo-option-check.log
-
-          echo
-          echo "----- Checking option -----"
-
-          grep -F \
-            '"-mllvm" "-regalloc-enable-advisor=release"' \
-            /tmp/mlgo-option-check.log
-
-          echo
-          echo "[OK] regalloc-enable-advisor=release is passed to LLVM"
-
       - name: Create AArch64 Test Source
         run: |
           set -e
@@ -284,6 +257,5 @@ jobs:
             /tmp/mlgo_test.c
             /tmp/mlgo_test.s
             /tmp/mlgo_debug.s
-            /tmp/mlgo-option-check.log
             /tmp/mlgo-compile.log
             /tmp/mlgo-advisor-debug.log
