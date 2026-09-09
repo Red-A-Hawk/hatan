@@ -1,10 +1,10 @@
-name: Test Real AArch64 MLGO RegAlloc vvvv
+name: Test Real AArch64 MLGO Advisor r547379
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-mlgo-regalloc:
+  test-mlgo-advisor:
     runs-on: ubuntu-22.04
 
     steps:
@@ -16,14 +16,45 @@ jobs:
 
       - name: Verify Clang
         run: |
+          set -e
+
           echo "========================================"
           echo "CLANG VERSION"
           echo "========================================"
 
           clang-r547379/bin/clang-20 --version
 
+      - name: Verify MLGO Advisor Option
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "MLGO ADVISOR OPTION"
+          echo "========================================"
+
+          clang-r547379/bin/clang-20 \
+            -target aarch64-linux-android \
+            -O2 \
+            -mllvm -regalloc-enable-advisor=release \
+            -### \
+            -c /dev/null \
+            -o /tmp/test.o \
+            2>&1 | tee /tmp/mlgo-option-check.log
+
+          echo
+          echo "----- Checking option -----"
+
+          grep -F \
+            '"-mllvm" "-regalloc-enable-advisor=release"' \
+            /tmp/mlgo-option-check.log
+
+          echo
+          echo "[OK] regalloc-enable-advisor=release is passed to LLVM"
+
       - name: Create AArch64 Test Source
         run: |
+          set -e
+
           cat > /tmp/mlgo_test.c <<'EOF'
           __attribute__((noinline))
           long mlgo_test(
@@ -71,10 +102,12 @@ jobs:
 
           cat /tmp/mlgo_test.c
 
-      - name: Real AArch64 RegAlloc MLGO Diagnostic
+      - name: Real AArch64 MLGO Advisor Compilation
         run: |
+          set -e
+
           echo "========================================"
-          echo "REAL AARCH64 MLGO REGALLOC TEST"
+          echo "REAL AARCH64 MLGO ADVISOR TEST"
           echo "========================================"
 
           clang-r547379/bin/clang-20 \
@@ -83,33 +116,98 @@ jobs:
             -S \
             /tmp/mlgo_test.c \
             -o /tmp/mlgo_test.s \
-            -mllvm -regalloc-evict=release \
-            -mllvm -debug-only=regalloc-evict \
-            2>&1 | tee /tmp/mlgo-regalloc.log
+            -mllvm -regalloc-enable-advisor=release \
+            2>&1 | tee /tmp/mlgo-compile.log
 
-      - name: Search MLGO Diagnostic Output
+          echo
+          echo "----- Verify assembly was generated -----"
+
+          test -s /tmp/mlgo_test.s
+
+          echo "[OK] AArch64 assembly generated"
+
+      - name: MLGO Advisor Diagnostic
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "MLGO ADVISOR DIAGNOSTIC"
+          echo "========================================"
+
+          clang-r547379/bin/clang-20 \
+            -target aarch64-linux-android \
+            -O2 \
+            -S \
+            /tmp/mlgo_test.c \
+            -o /tmp/mlgo_debug.s \
+            -mllvm -regalloc-enable-advisor=release \
+            -mllvm -debug \
+            2>&1 | tee /tmp/mlgo-advisor-debug.log
+
+          echo
+          echo "----- Verify debug assembly -----"
+
+          test -s /tmp/mlgo_debug.s
+
+          echo "[OK] Debug AArch64 assembly generated"
+
+      - name: Analyze MLGO Advisor Activity
         run: |
           echo "========================================"
-          echo "MLGO / REGALLOC DIAGNOSTIC OUTPUT"
+          echo "MLGO ADVISOR ACTIVITY"
           echo "========================================"
 
           echo
-          echo "----- Relevant diagnostic lines -----"
+          echo "----- Relevant messages -----"
 
-          grep -Ei \
-            'mlgo|regalloc|evict|advisor|model|tflite|tensorflow|policy|release|fallback|default' \
-            /tmp/mlgo-regalloc.log \
+          grep -Ein \
+            'mlgo|regalloc|advisor|model|tflite|tensorflow|evict|priority|fallback|default|release' \
+            /tmp/mlgo-compile.log \
+            /tmp/mlgo-advisor-debug.log \
             || true
 
           echo
-          echo "----- Full diagnostic log -----"
-
-          cat /tmp/mlgo-regalloc.log
-
-      - name: Verify AArch64 Code Generation
-        run: |
           echo "========================================"
-          echo "AARCH64 CODE GENERATION"
+          echo "MODEL LOADING INDICATORS"
+          echo "========================================"
+
+          if grep -Eiq \
+            'model|tflite|tensorflow|saved.model|fingerprint|policy_specs' \
+            /tmp/mlgo-compile.log \
+            /tmp/mlgo-advisor-debug.log; then
+
+            echo "[FOUND] Model-related diagnostic activity detected"
+
+          else
+
+            echo "[NOT FOUND] No explicit model-loading message detected"
+
+          fi
+
+          echo
+          echo "========================================"
+          echo "REGALLOC ADVISOR INDICATORS"
+          echo "========================================"
+
+          if grep -Eiq \
+            'regalloc|advisor|evict|priority' \
+            /tmp/mlgo-compile.log \
+            /tmp/mlgo-advisor-debug.log; then
+
+            echo "[FOUND] RegAlloc/Advisor diagnostic activity detected"
+
+          else
+
+            echo "[NOT FOUND] No RegAlloc/Advisor diagnostic activity detected"
+
+          fi
+
+      - name: Inspect Generated AArch64 Assembly
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "AARCH64 CODE GENERATION RESULT"
           echo "========================================"
 
           file /tmp/mlgo_test.s
@@ -120,76 +218,72 @@ jobs:
           cat /tmp/mlgo_test.s
 
           echo
-          echo "----- Verify AArch64 registers -----"
+          echo "----- AArch64 registers -----"
 
           grep -E \
-            'x[0-9]+|w[0-9]+' \
+            '\b(x[0-9]+|w[0-9]+)\b' \
             /tmp/mlgo_test.s \
             | head -100 \
             || true
 
-      - name: Real MLGO Advisor Diagnostic With LLVM Debug
+      - name: Final MLGO Result
         run: |
           echo "========================================"
-          echo "MLGO ADVISOR DEBUG"
-          echo "========================================"
-
-          clang-r547379/bin/clang-20 \
-            -target aarch64-linux-android \
-            -O2 \
-            -S \
-            /tmp/mlgo_test.c \
-            -o /tmp/mlgo_advisor.s \
-            -mllvm -regalloc-evict=release \
-            -mllvm -debug-only=regalloc-evict \
-            -mllvm -debug \
-            2>&1 | tee /tmp/mlgo-advisor-debug.log
-
-      - name: Analyze Model Loading Attempt
-        run: |
-          echo "========================================"
-          echo "MODEL LOADING ANALYSIS"
+          echo "FINAL MLGO ADVISOR RESULT"
           echo "========================================"
 
           echo
-          echo "----- Model / Advisor / Fallback messages -----"
-
-          grep -Ein \
-            'model|mlgo|advisor|eviction|evict|tensorflow|tflite|saved.model|policy|fingerprint|could not be created|using default|fallback' \
-            /tmp/mlgo-advisor-debug.log \
-            || true
+          echo "Option:"
+          echo "  -mllvm -regalloc-enable-advisor=release"
 
           echo
-          echo "========================================"
-          echo "FINAL INTERPRETATION"
-          echo "========================================"
+          echo "AArch64 backend:"
+          if [ -s /tmp/mlgo_test.s ]; then
+            echo "  [OK] Executed and generated assembly"
+          else
+            echo "  [FAIL] No assembly generated"
+          fi
+
+          echo
+          echo "Model diagnostic:"
 
           if grep -Eiq \
-            'model|tflite|tensorflow|saved.model|policy|fingerprint' \
+            'model|tflite|tensorflow|saved.model|fingerprint|policy_specs' \
+            /tmp/mlgo-compile.log \
             /tmp/mlgo-advisor-debug.log; then
 
-            echo "[MLGO] MODEL-RELATED ACTIVITY DETECTED"
-
-          elif grep -Eiq \
-            'eviction advisor|regalloc eviction|regalloc-evict' \
-            /tmp/mlgo-advisor-debug.log; then
-
-            echo "[MLGO] REGALLOC EVICTION ADVISOR ACTIVITY DETECTED"
-            echo "[MLGO] NO EXPLICIT MODEL LOAD MESSAGE DETECTED"
+            echo "  [DETECTED] Model-related activity found"
 
           else
 
-            echo "[MLGO] NO MLGO/REGALLOC DIAGNOSTIC ACTIVITY DETECTED"
+            echo "  [NOT DETECTED] No explicit model-loading message found"
+
+          fi
+
+          echo
+          echo "RegAlloc Advisor diagnostic:"
+
+          if grep -Eiq \
+            'regalloc|advisor|evict|priority' \
+            /tmp/mlgo-compile.log \
+            /tmp/mlgo-advisor-debug.log; then
+
+            echo "  [DETECTED] RegAlloc/Advisor activity found"
+
+          else
+
+            echo "  [NOT DETECTED] No explicit RegAlloc/Advisor activity found"
 
           fi
 
       - name: Upload MLGO Diagnostic
         uses: actions/upload-artifact@v4
         with:
-          name: mlgo-regalloc-diagnostic-r547379
+          name: mlgo-advisor-diagnostic-r547379
           path: |
             /tmp/mlgo_test.c
             /tmp/mlgo_test.s
-            /tmp/mlgo_advisor.s
-            /tmp/mlgo-regalloc.log
+            /tmp/mlgo_debug.s
+            /tmp/mlgo-option-check.log
+            /tmp/mlgo-compile.log
             /tmp/mlgo-advisor-debug.log
