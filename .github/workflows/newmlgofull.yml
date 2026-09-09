@@ -31,6 +31,34 @@ jobs:
         fetch-depth: 1
         path: k
 
+    # ============================================================
+    # Setup 16GB Swap
+    # ============================================================
+
+    - name: Setup 16GB Swap
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "SETTING UP 16GB SWAP"
+        echo "========================================"
+
+        sudo swapoff -a || true
+        sudo rm -f /swapfile
+
+        sudo fallocate -l 16G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+
+        echo
+        echo "========================================"
+        echo "SWAP STATUS"
+        echo "========================================"
+
+        free -h
+        swapon --show
+
     - name: Install dependencies
       run: |
         sudo apt update
@@ -110,7 +138,7 @@ jobs:
 
         test -f out/.config
 
-    - name: Configure Matrix
+    - name: Configure MLGO
       run: |
         set -e
 
@@ -128,14 +156,6 @@ jobs:
         fi
 
         make O=out ARCH=arm64 olddefconfig
-
-        echo "========================================"
-        echo "MLGO MODE: ${{ matrix.mlgo }}"
-        echo "========================================"
-
-        grep -E \
-          'CONFIG_(LTO|THINLTO|LTO_CLANG|POLLY_CLANG|POLLY_DCE|LD_DEAD_CODE_DATA_ELIMINATION|KSU|KSU_SUSFS|NOMOUNT|MLGO_CLANG)=' \
-          out/.config || true
 
     - name: Verify MLGO Configuration
       run: |
@@ -174,6 +194,40 @@ jobs:
         rm -f compile_commands.json
         rm -f bear-build.log
         rm -f build.log
+
+        monitor_resources() {
+          while true; do
+            printf '[%s] ' "$(date '+%Y-%m-%d %H:%M:%S')" >&2
+
+            RAM=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
+            SWAP=$(free -h | awk '/^Swap:/ {print $3 "/" $2}')
+            CPU=$(top -b -n 1 | awk '/Cpu\(s\)/ {printf "%.0f%%", 100 - $8; exit}')
+
+            LLD=$(ps -eo pid,%cpu,%mem,rss,vsz,stat,comm --sort=-rss \
+              | awk '$7 == "ld.lld" {
+                  printf "CPU: %.0f%% | MEM: %.1f%% | RSS: %.1fG | VSZ: %.1fG | STAT: %s",
+                  $2, $3, $4/1024/1024, $5/1024/1024, $6
+                  exit
+                }')
+
+            [ -z "$LLD" ] && LLD="N/A"
+
+            echo "RAM: $RAM | SWAP: $SWAP | CPU: $CPU | ld.lld: $LLD" >&2
+
+            sleep 15
+          done
+        }
+
+        monitor_resources &
+        MONITOR_PID=$!
+
+        cleanup_monitor() {
+          if kill -0 "$MONITOR_PID" 2>/dev/null; then
+            kill "$MONITOR_PID" 2>/dev/null || true
+          fi
+        }
+
+        trap cleanup_monitor EXIT
 
         bear -- make -j$(nproc --all) \
           O=out \
@@ -287,20 +341,20 @@ jobs:
 
         fi
 
-    - name: Scan LTO Polly MLGO Flags
+    - name: Scan MLGO Flags
       run: |
         set -e
 
         echo "========================================"
-        echo "LTO / THINLTO / POLLY / MLGO FLAG SCAN"
+        echo "MLGO FLAG SCAN"
         echo "========================================"
 
         grep -Ein \
-          '(^|[[:space:]])(-flto|-mllvm|.*polly.*|.*mlgo.*|.*regalloc.*|.*dead.?code.*)' \
+          '(^|[[:space:]])(-mllvm|.*mlgo.*|.*regalloc.*)' \
           build.log || true
 
         echo "========================================"
-        echo "FLAG SCAN COMPLETE"
+        echo "MLGO FLAG SCAN COMPLETE"
         echo "========================================"
 
     # ============================================================
