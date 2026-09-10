@@ -1,0 +1,138 @@
+name: Build Hatan Kernel with Buildroot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT BUILDROOT
+      # ============================================================
+      - name: Checkout Buildroot
+        uses: actions/checkout@v4
+        with:
+          repository: backslashxx/buildroot
+          path: buildroot
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. CHECKOUT HATAN - BUILDROOT BRANCH
+      # ============================================================
+      - name: Checkout Hatan
+        uses: actions/checkout@v4
+        with:
+          repository: Red-A-Hawk/hatan
+          ref: buildroot
+          path: hatan
+          fetch-depth: 1
+
+      # ============================================================
+      # 3. INSTALL BUILD DEPENDENCIES
+      # ============================================================
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            cpio \
+            flex \
+            file \
+            gawk \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            rsync \
+            unzip \
+            wget \
+            python3
+
+      # ============================================================
+      # 4. VERIFY KERNEL SOURCE
+      # ============================================================
+      - name: Verify Hatan source
+        run: |
+          set -e
+
+          test -f hatan/Makefile
+          test -f hatan/arch/arm64/configs/vendor/violet-perf_defconfig
+
+          echo "Kernel source:"
+          git -C hatan rev-parse HEAD
+
+          echo "Kernel config:"
+          ls -lh hatan/arch/arm64/configs/vendor/violet-perf_defconfig
+
+      # ============================================================
+      # 5. CREATE BUILDROOT CONFIG
+      # ============================================================
+      - name: Configure Buildroot
+        working-directory: buildroot
+        run: |
+          make qemu_aarch64_virt_defconfig
+
+          cat >> .config <<EOF
+
+          BR2_LINUX_KERNEL=y
+          BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+          BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="4.14.357"
+          BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+          BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="../hatan/arch/arm64/configs/vendor/violet-perf_defconfig"
+          EOF
+
+          make olddefconfig
+
+      # ============================================================
+      # 6. BUILD
+      # ============================================================
+      - name: Build with Buildroot
+        working-directory: buildroot
+        run: |
+          make -j$(nproc)
+
+      # ============================================================
+      # 7. SHOW OUTPUT
+      # ============================================================
+      - name: Show build output
+        if: always()
+        run: |
+          echo "========================================"
+          echo "Buildroot images:"
+          echo "========================================"
+
+          if [ -d buildroot/output/images ]; then
+            ls -lah buildroot/output/images
+          else
+            echo "output/images does not exist"
+          fi
+
+          echo "========================================"
+          echo "Kernel output:"
+          echo "========================================"
+
+          if [ -f hatan/arch/arm64/boot/Image.gz ]; then
+            ls -lh hatan/arch/arm64/boot/Image.gz
+          fi
+
+          if [ -f hatan/arch/arm64/boot/Image ]; then
+            ls -lh hatan/arch/arm64/boot/Image
+          fi
+
+      # ============================================================
+      # 8. UPLOAD BUILDROOT OUTPUT
+      # ============================================================
+      - name: Upload Buildroot output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-hatan-output
+          path: |
+            buildroot/output/images/*
+            hatan/arch/arm64/boot/Image
+            hatan/arch/arm64/boot/Image.gz
+          if-no-files-found: warn
