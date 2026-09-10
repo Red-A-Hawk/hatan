@@ -64,10 +64,19 @@ jobs:
           test -f hatan/Makefile
           test -f hatan/arch/arm64/configs/vendor/violet-perf_defconfig
 
-          echo "Kernel commit:"
+          echo "========================================"
+          echo "Hatan branch:"
+          echo "========================================"
+          git -C hatan branch --show-current
+
+          echo "========================================"
+          echo "Hatan commit:"
+          echo "========================================"
           git -C hatan rev-parse HEAD
 
+          echo "========================================"
           echo "Kernel config:"
+          echo "========================================"
           ls -lh hatan/arch/arm64/configs/vendor/violet-perf_defconfig
 
       # ============================================================
@@ -116,12 +125,12 @@ jobs:
           echo "Kernel output:"
           echo "========================================"
 
-          if [ -f hatan/arch/arm64/boot/Image.gz ]; then
-            ls -lh hatan/arch/arm64/boot/Image.gz
-          fi
-
           if [ -f hatan/arch/arm64/boot/Image ]; then
             ls -lh hatan/arch/arm64/boot/Image
+          fi
+
+          if [ -f hatan/arch/arm64/boot/Image.gz ]; then
+            ls -lh hatan/arch/arm64/boot/Image.gz
           fi
 
       # ============================================================
