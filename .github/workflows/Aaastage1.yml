@@ -44,10 +44,6 @@ jobs:
 
           # ========================================================
           # 1. ThinLTO + Unified ThinLTO
-          #    tbyool:
-          #    -flto=thin
-          #    -fsplit-lto-unit
-          #    -funified-lto
           # ========================================================
           old = """ifdef CONFIG_LTO_CLANG
           ifdef CONFIG_THINLTO
@@ -80,26 +76,27 @@ jobs:
           # ========================================================
           # 2. Whole-program-vtables
           #
-          # The original tbyool commit contains:
+          # Keep the original tbyool commit form exactly:
           # KBUILD_CFLAG += -fwhole-program-vtables
           #
-          # That is a typo (KBUILD_CFLAG), so it does not actually
-          # add the option. Put it into lto-clang-flags so it is
-          # passed together with -flto and does not break non-LTO
-          # compile commands such as kernel/bounds.s.
+          # Note: KBUILD_CFLAG is the spelling used by the original
+          # tbyool commit.
           # ========================================================
-          old = "lto-clang-flags += -fvisibility=hidden\n"
-          new = (
-              "lto-clang-flags += -fvisibility=hidden\n"
-              "lto-clang-flags += -fwhole-program-vtables\n"
-          )
+          marker = "lto-clang-flags += -fvisibility=hidden\n"
 
-          if old not in text:
+          if marker not in text:
               raise SystemExit(
                   "ERROR: LTO visibility line was not found."
               )
 
-          text = text.replace(old, new, 1)
+          replacement = (
+              marker +
+              "ifdef CONFIG_LTO_CLANG\n"
+              "KBUILD_CFLAG += -fwhole-program-vtables\n"
+              "endif\n"
+          )
+
+          text = text.replace(marker, replacement, 1)
 
           # ========================================================
           # 3. Unroll threshold = 1200
