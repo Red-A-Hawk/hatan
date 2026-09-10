@@ -91,6 +91,7 @@ jobs:
           BR2_LINUX_KERNEL=y
           BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
           BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="../hatan/arch/arm64/configs/vendor/violet-perf_defconfig"
+          BR2_KERNEL_HEADERS_4_14=y
           EOF
 
           cat > local.mk <<EOF
