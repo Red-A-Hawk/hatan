@@ -381,7 +381,10 @@ jobs:
           set -e
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
           rm -f out/vmlinux
-          make V=1 \
+          # Dry-run only (-n): prints the link command make WOULD run,
+          # without actually performing the link. This avoids paying
+          # the full link cost (minutes) just to inspect the flags.
+          make V=1 -n \
             O=out \
             ARCH=arm64 \
             LLVM=1 \
@@ -399,9 +402,8 @@ jobs:
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             vmlinux \
             > link-verbose.log 2>&1
-          test -f out/vmlinux
           echo "========================================"
-          echo "GC-SECTIONS CHECK"
+          echo "GC-SECTIONS CHECK (dry-run, no real link performed)"
           echo "========================================"
           if grep -q -- "--gc-sections" link-verbose.log; then
             echo "[OK] --gc-sections found"
@@ -413,7 +415,7 @@ jobs:
             exit 1
           fi
           echo "========================================"
-          echo "Full verbose link command saved to link-verbose.log ($(wc -l < link-verbose.log) lines, $(du -h link-verbose.log | cut -f1))"
+          echo "Full dry-run link command saved to link-verbose.log ($(wc -l < link-verbose.log) lines, $(du -h link-verbose.log | cut -f1))"
           echo "========================================"
 
       - name: Create Image.gz
