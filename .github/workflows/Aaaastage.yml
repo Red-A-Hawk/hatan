@@ -1,4 +1,4 @@
-name: Build Kernel MLGO Profile Matrix v67
+name: Build Kernel MLGO Profile Matrix v68
 
 on:
   push:
@@ -245,6 +245,46 @@ jobs:
           PY
           test -f bear-build.log
 
+      - name: Measure Image.gz and dtbo.img
+        run: |
+          set -e
+          echo "========================================"
+          echo "OUTPUT IMAGE SIZES"
+          echo "========================================"
+
+          # Image.gz and dtbo.img are already produced by the default
+          # "Build Kernel with Bear" target above (no separate build
+          # needed). Image.gz is mandatory; dtbo.img is optional and
+          # only present if the defconfig enables DTBO.
+
+          IMAGE="out/arch/arm64/boot/Image.gz"
+          test -f "$IMAGE"
+          IMAGE_BYTES=$(stat -c '%s' "$IMAGE")
+          IMAGE_MB=$(python3 -c "print(f'{int($IMAGE_BYTES) / (1024 * 1024):.2f}')")
+          echo "Image.gz : ${IMAGE_MB} MB (${IMAGE_BYTES} bytes)"
+
+          DTBO="out/arch/arm64/boot/dtbo.img"
+          if [ -f "$DTBO" ]; then
+            DTBO_BYTES=$(stat -c '%s' "$DTBO")
+            DTBO_MB=$(python3 -c "print(f'{int($DTBO_BYTES) / (1024 * 1024):.2f}')")
+            echo "dtbo.img : ${DTBO_MB} MB (${DTBO_BYTES} bytes)"
+          else
+            DTBO_BYTES="N/A"
+            DTBO_MB="N/A"
+            echo "dtbo.img : not produced (DTBO not enabled in this defconfig)"
+          fi
+
+          echo "========================================"
+
+          {
+            echo "MLGO=${{ matrix.mlgo }}"
+            echo "PROFILE=${{ matrix.profile }}"
+            echo "Image.gz: ${IMAGE_MB} MB"
+            echo "Image.gz exact bytes: ${IMAGE_BYTES} bytes"
+            echo "dtbo.img: ${DTBO_MB} MB"
+            echo "dtbo.img exact bytes: ${DTBO_BYTES} bytes"
+          } > output-sizes.txt
+
       - name: Split Errors and Warnings
         run: |
           set -e
@@ -418,45 +458,6 @@ jobs:
           echo "Full dry-run link command saved to link-verbose.log ($(wc -l < link-verbose.log) lines, $(du -h link-verbose.log | cut -f1))"
           echo "========================================"
 
-      - name: Create Image.gz
-        run: |
-          set -e
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-          make \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            Image.gz
-          test -f out/arch/arm64/boot/Image.gz
-
-      - name: Measure Image.gz
-        run: |
-          set -e
-          IMAGE="out/arch/arm64/boot/Image.gz"
-          test -f "$IMAGE"
-          BYTES=$(stat -c '%s' "$IMAGE")
-          SIZE_MB=$(python3 -c "print(f'{int($BYTES) / (1024 * 1024):.2f}')")
-          echo "========================================"
-          echo "IMAGE.GZ SIZE"
-          echo "========================================"
-          echo "Image.gz: ${SIZE_MB} MB"
-          echo "Exact bytes: ${BYTES} bytes"
-          echo "========================================"
-          echo "Image.gz: ${SIZE_MB} MB" > Image-size.txt
-          echo "Exact bytes: ${BYTES} bytes" >> Image-size.txt
-
       - name: Measure vmlinux
         run: |
           set -e
@@ -483,5 +484,6 @@ jobs:
             k/warnings.log
             k/link-verbose.log
             k/vmlinux-size.txt
-            k/Image-size.txt
+            k/output-sizes.txt
             k/out/arch/arm64/boot/Image.gz
+            k/out/arch/arm64/boot/dtbo.img
