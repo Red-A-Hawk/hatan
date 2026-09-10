@@ -234,7 +234,7 @@ jobs:
           make -s printvars VARS='LINUX_OVERRIDE_SRCDIR' QUOTE=sh
 
       # ============================================================
-      # 10. PREPARE LINUX SOURCE
+      # 10. PREPARE HATAN LINUX SOURCE
       # ============================================================
       - name: Prepare Hatan Linux source
         working-directory: buildroot
@@ -245,7 +245,135 @@ jobs:
           echo "PREPARE HATAN LINUX SOURCE"
           echo "=============================================="
 
+          LINUX_DIR="$(
+            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
+            | tail -n 1
+          )"
+
+          echo
+          echo "Hatan source:"
+          echo "../hatan"
+
+          echo
+          echo "Linux custom:"
+          echo "$LINUX_DIR"
+
+          echo
+          echo "=============================================="
+          echo "1. VERIFY HATAN SOURCE BEFORE SYNC"
+          echo "=============================================="
+
+          test -f ../hatan/Makefile
+          test -f ../hatan/arch/arm64/configs/vendor/violet-perf_defconfig
+          test -f ../hatan/arch/arm64/include/uapi/asm/sigcontext.h
+
+          echo "Hatan Makefile: OK"
+          echo "Hatan defconfig: OK"
+          echo "Hatan sigcontext.h: OK"
+
+          echo
+          echo "Hatan commit:"
+          git -C ../hatan rev-parse HEAD
+
+          echo
+          echo "=============================================="
+          echo "2. REMOVE OLD LINUX-CUSTOM"
+          echo "=============================================="
+
+          rm -rf "$LINUX_DIR"
+
+          echo
+          echo "Old linux-custom removed."
+
+          echo
+          echo "=============================================="
+          echo "3. RUN BUILDROOT LINUX REBUILD"
+          echo "=============================================="
+
           make linux-rebuild
+
+          echo
+          echo "=============================================="
+          echo "4. VERIFY LINUX-CUSTOM WAS CREATED"
+          echo "=============================================="
+
+          test -d "$LINUX_DIR"
+
+          echo "linux-custom directory: OK"
+
+          echo
+          echo "Linux custom:"
+          echo "$LINUX_DIR"
+
+          echo
+          echo "=============================================="
+          echo "5. VERIFY KERNEL SOURCE FILES"
+          echo "=============================================="
+
+          test -f "$LINUX_DIR/Makefile"
+          test -f "$LINUX_DIR/arch/arm64/configs/vendor/violet-perf_defconfig"
+          test -f "$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          echo "Makefile: OK"
+          echo "defconfig: OK"
+          echo "sigcontext.h: OK"
+
+          echo
+          echo "=============================================="
+          echo "6. VERIFY HATAN sigcontext.h CONTENT"
+          echo "=============================================="
+
+          grep -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            "$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          echo
+          echo "Required Hatan UAPI definitions: FOUND"
+
+          echo
+          echo "=============================================="
+          echo "7. COMPARE HATAN VS LINUX-CUSTOM"
+          echo "=============================================="
+
+          cmp \
+            ../hatan/arch/arm64/include/uapi/asm/sigcontext.h \
+            "$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          echo "sigcontext.h: IDENTICAL"
+
+          cmp \
+            ../hatan/arch/arm64/configs/vendor/violet-perf_defconfig \
+            "$LINUX_DIR/arch/arm64/configs/vendor/violet-perf_defconfig"
+
+          echo "violet-perf_defconfig: IDENTICAL"
+
+          cmp \
+            ../hatan/Makefile \
+            "$LINUX_DIR/Makefile"
+
+          echo "Makefile: IDENTICAL"
+
+          echo
+          echo "=============================================="
+          echo "8. VERIFY SOURCE COMMITS"
+          echo "=============================================="
+
+          echo
+          echo "Hatan commit:"
+          git -C ../hatan rev-parse HEAD
+
+          echo
+          echo "linux-custom is not a git repository check:"
+          if [ -d "$LINUX_DIR/.git" ]; then
+            git -C "$LINUX_DIR" rev-parse HEAD
+          else
+            echo "linux-custom has no .git directory"
+          fi
+
+          echo
+          echo "=============================================="
+          echo "HATAN LINUX SOURCE VERIFICATION: PASS"
+          echo "=============================================="
 
       # ============================================================
       # 11. VERIFY LINUX-CUSTOM
@@ -281,7 +409,7 @@ jobs:
           echo "OK"
 
       # ============================================================
-      # 12. VERIFY HATAN SOURCE WAS COPIED
+      # 12. VERIFY HATAN SOURCE INSIDE LINUX-CUSTOM
       # ============================================================
       - name: Verify Hatan source inside Linux custom
         working-directory: buildroot
@@ -310,13 +438,12 @@ jobs:
           test -f "$SIGCONTEXT"
           echo "sigcontext.h EXISTS"
 
-          echo
           grep -nE \
             'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
             "$SIGCONTEXT"
 
       # ============================================================
-      # 13. COMPARE HATAN SOURCE WITH LINUX-CUSTOM
+      # 13. COMPARE HATAN AND BUILDROOT LINUX SOURCE
       # ============================================================
       - name: Compare Hatan and Buildroot Linux source
         working-directory: buildroot
