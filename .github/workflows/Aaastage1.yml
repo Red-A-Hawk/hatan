@@ -1,4 +1,4 @@
-name: Build Kernel MLGO Only Matrix v1
+name: Build Kernel MLGO Only Matrix
 
 on:
   push:
@@ -8,13 +8,10 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-22.04
-
     defaults:
       run:
         working-directory: k
-
     strategy:
       fail-fast: false
       matrix:
@@ -23,477 +20,383 @@ jobs:
           - with
 
     steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: xxx-17
+          fetch-depth: 1
+          path: k
 
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
-      with:
-        ref: xxx-17
-        fetch-depth: 1
-        path: k
+      # ============================================================
+      # Setup 16GB Swap
+      # ============================================================
+      - name: Setup 16GB Swap
+        run: |
+          set -e
+          echo "========================================"
+          echo "SETTING UP 16GB SWAP"
+          echo "========================================"
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo
+          echo "========================================"
+          echo "SWAP STATUS"
+          echo "========================================"
+          free -h
+          swapon --show
 
-    # ============================================================
-    # Setup 16GB Swap
-    # ============================================================
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            make \
+            zip \
+            unzip \
+            curl \
+            wget \
+            libelf-dev \
+            libncurses-dev \
+            python3 \
+            openjdk-17-jre-headless \
+            bear
 
-    - name: Setup 16GB Swap
-      run: |
-        set -e
+      - name: Clone LineageOS Toolchains
+        run: |
+          set -e
+          rm -rf clang gcc64 gcc32
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
 
-        echo "========================================"
-        echo "SETTING UP 16GB SWAP"
-        echo "========================================"
+      - name: Setup Environment
+        run: |
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-        sudo swapoff -a || true
-        sudo rm -f /swapfile
+      - name: Verify toolchains
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          which clang
+          clang --version
+          which ld.lld
+          ld.lld --version
+          which llvm-ar
+          which llvm-nm
+          which llvm-objcopy
+          which llvm-objdump
+          which llvm-strip
+          echo "=== BEAR ==="
+          which bear
+          bear --version
 
-        sudo fallocate -l 16G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
+      - name: Load Original violet-perf defconfig
+        run: |
+          set -e
+          export ARCH=arm64
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          make O=out ARCH=arm64 vendor/violet-perf_defconfig
+          test -f out/.config
 
-        echo
-        echo "========================================"
-        echo "SWAP STATUS"
-        echo "========================================"
-
-        free -h
-        swapon --show
-
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y \
-          git \
-          bc \
-          bison \
-          flex \
-          libssl-dev \
-          make \
-          zip \
-          unzip \
-          curl \
-          wget \
-          libelf-dev \
-          libncurses-dev \
-          python3 \
-          openjdk-17-jre-headless \
-          bear
-
-    - name: Clone LineageOS Toolchains
-      run: |
-        set -e
-        rm -rf clang gcc64 gcc32
-
-        git clone --depth=1 \
-          https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
-          clang
-
-        git clone --depth=1 \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
-          gcc64
-
-        git clone --depth=1 \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
-          gcc32
-
-    - name: Setup Environment
-      run: |
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
-        echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
-        echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
-        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
-
-    - name: Verify toolchains
-      run: |
-        set -e
-
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        which clang
-        clang --version
-
-        which ld.lld
-        ld.lld --version
-
-        which llvm-ar
-        which llvm-nm
-        which llvm-objcopy
-        which llvm-objdump
-        which llvm-strip
-
-        echo "=== BEAR ==="
-        which bear
-        bear --version
-
-    - name: Load Original violet-perf defconfig
-      run: |
-        set -e
-
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        make O=out ARCH=arm64 vendor/violet-perf_defconfig
-
-        test -f out/.config
-
-    - name: Configure MLGO
-      run: |
-        set -e
-
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        if [ "${{ matrix.mlgo }}" = "with" ]; then
-          scripts/config \
-            --file out/.config \
-            --enable CONFIG_MLGO_CLANG
-        else
-          scripts/config \
-            --file out/.config \
-            --disable CONFIG_MLGO_CLANG
-        fi
-
-        make O=out ARCH=arm64 olddefconfig
-
-    - name: Verify MLGO Configuration
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "MLGO CONFIGURATION CHECK"
-        echo "========================================"
-
-        if [ "${{ matrix.mlgo }}" = "with" ]; then
-
-          if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
-            echo "[OK] CONFIG_MLGO_CLANG=y"
+      - name: Configure MLGO
+        run: |
+          set -e
+          export ARCH=arm64
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_MLGO_CLANG
           else
-            echo "[ERROR] CONFIG_MLGO_CLANG is not enabled"
-            exit 1
+            scripts/config \
+              --file out/.config \
+              --disable CONFIG_MLGO_CLANG
           fi
+          make O=out ARCH=arm64 olddefconfig
 
-        else
-
-          if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
-            echo "[ERROR] CONFIG_MLGO_CLANG=y in MLGO-OFF build"
-            exit 1
+      - name: Verify MLGO Configuration
+        run: |
+          set -e
+          echo "========================================"
+          echo "MLGO CONFIGURATION CHECK"
+          echo "========================================"
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
+              echo "[OK] CONFIG_MLGO_CLANG=y"
+            else
+              echo "[ERROR] CONFIG_MLGO_CLANG is not enabled"
+              exit 1
+            fi
           else
-            echo "[OK] CONFIG_MLGO_CLANG=n"
+            if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
+              echo "[ERROR] CONFIG_MLGO_CLANG=y in MLGO-OFF build"
+              exit 1
+            else
+              echo "[OK] CONFIG_MLGO_CLANG=n"
+            fi
           fi
 
-        fi
-
-    - name: Build Kernel with Bear
-      run: |
-        set -e
-
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        rm -f compile_commands.json
-        rm -f bear-build.log
-        rm -f build.log
-
-        monitor_resources() {
-          while true; do
-            printf '[%s] ' "$(date '+%Y-%m-%d %H:%M:%S')" >&2
-
-            RAM=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
-            SWAP=$(free -h | awk '/^Swap:/ {print $3 "/" $2}')
-            CPU=$(top -b -n 1 | awk '/Cpu\(s\)/ {printf "%.0f%%", 100 - $8; exit}')
-
-            LLD=$(ps -eo pid,%cpu,%mem,rss,vsz,stat,comm --sort=-rss \
-              | awk '$7 == "ld.lld" {
-                  printf "CPU: %.0f%% | MEM: %.1f%% | RSS: %.1fG | VSZ: %.1fG | STAT: %s",
-                  $2, $3, $4/1024/1024, $5/1024/1024, $6
-                  exit
-                }')
-
-            [ -z "$LLD" ] && LLD="N/A"
-
-            echo "RAM: $RAM | SWAP: $SWAP | CPU: $CPU | ld.lld: $LLD" >&2
-
-            sleep 15
-          done
-        }
-
-        monitor_resources &
-        MONITOR_PID=$!
-
-        cleanup_monitor() {
-          if kill -0 "$MONITOR_PID" 2>/dev/null; then
-            kill "$MONITOR_PID" 2>/dev/null || true
+      - name: Build Kernel with Bear
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          rm -f compile_commands.json
+          rm -f bear-build.log
+          rm -f build.log
+          monitor_resources() {
+            while true; do
+              printf '[%s] ' "$(date '+%Y-%m-%d %H:%M:%S')" >&2
+              RAM=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
+              SWAP=$(free -h | awk '/^Swap:/ {print $3 "/" $2}')
+              CPU=$(top -b -n 1 | awk '/Cpu(s)/ {printf "%.0f%%", 100 - $8; exit}')
+              LLD=$(ps -eo pid,%cpu,%mem,rss,vsz,stat,comm --sort=-rss \
+                | awk '$7 == "ld.lld" { printf "CPU: %.0f%% | MEM: %.1f%% | RSS: %.1fG | VSZ: %.1fG | STAT: %s", $2, $3, $4/1024/1024, $5/1024/1024, $6; exit }')
+              [ -z "$LLD" ] && LLD="N/A"
+              echo "RAM: $RAM | SWAP: $SWAP | CPU: $CPU | ld.lld: $LLD" >&2
+              sleep 15
+            done
+          }
+          monitor_resources &
+          MONITOR_PID=$!
+          cleanup_monitor() {
+            if kill -0 "$MONITOR_PID" 2>/dev/null; then
+              kill "$MONITOR_PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_monitor EXIT
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            KCFLAGS="-mllvm -enable-ml-inliner=release -Rpass=inline-ml"
+          else
+            KCFLAGS=""
           fi
-        }
+          bear -- make -j$(nproc --all) \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            KCFLAGS="$KCFLAGS" \
+            2>&1 | tee build.log | sed '/-Rpass=inline-ml/d'
+          test -f compile_commands.json
+          python3 - <<'PY'
+          import json
+          import shlex
+          with open("compile_commands.json", "r", encoding="utf-8") as f:
+              commands = json.load(f)
+          with open("bear-build.log", "w", encoding="utf-8") as f:
+              for entry in commands:
+                  arguments = entry.get("arguments")
+                  if arguments:
+                      f.write(shlex.join(arguments))
+                      f.write("\n")
+                      continue
+                  command = entry.get("command")
+                  if command:
+                      f.write(command)
+                      f.write("\n")
+          PY
+          test -f bear-build.log
 
-        trap cleanup_monitor EXIT
+      - name: Verify MLGO Flag from build.log
+        run: |
+          set -e
+          echo "========================================"
+          echo "MLGO FLAG VERIFICATION"
+          echo "========================================"
+          TARGET="-mllvm -regalloc-enable-advisor=release"
+          python3 - <<'PY'
+          import json
+          import shlex
+          with open("compile_commands.json", "r", encoding="utf-8") as f:
+              commands = json.load(f)
+          with open("build.log", "a", encoding="utf-8") as log:
+              log.write("\n")
+              log.write("========================================\n")
+              log.write("BEAR CLANG COMMANDS\n")
+              log.write("========================================\n")
+              for entry in commands:
+                  arguments = entry.get("arguments")
+                  if arguments:
+                      log.write(shlex.join(arguments))
+                      log.write("\n")
+                      continue
+                  command = entry.get("command")
+                  if command:
+                      log.write(command)
+                      log.write("\n")
+          PY
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[OK] MLGO Release flag found in build.log"
+              echo
+              echo "=== MLGO MATCH ==="
+              grep -Fn -- "$TARGET" build.log
+            else
+              echo "[ERROR] MLGO Release flag NOT found in build.log"
+              exit 1
+            fi
+          else
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[ERROR] MLGO Release flag found in MLGO-OFF build.log"
+              echo
+              echo "=== UNEXPECTED MLGO MATCH ==="
+              grep -Fn -- "$TARGET" build.log
+              exit 1
+            else
+              echo "[OK] MLGO Release flag not found in MLGO-OFF build.log"
+            fi
+          fi
 
-        if [ "${{ matrix.mlgo }}" = "with" ]; then
-          KCFLAGS="-mllvm -enable-ml-inliner=release -Rpass=inline-ml"
-        else
-          KCFLAGS=""
-        fi
-
-        bear -- make -j$(nproc --all) \
-          O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          CROSS_COMPILE="$CROSS_COMPILE" \
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-          CLANG_TRIPLE="$CLANG_TRIPLE" \
-          KCFLAGS="$KCFLAGS" \
-          2>&1 | tee build.log
-
-        test -f compile_commands.json
-
-        python3 - <<'PY'
-        import json
-        import shlex
-
-        with open("compile_commands.json", "r", encoding="utf-8") as f:
-            commands = json.load(f)
-
-        with open("bear-build.log", "w", encoding="utf-8") as f:
-            for entry in commands:
-
-                arguments = entry.get("arguments")
-
-                if arguments:
-                    f.write(shlex.join(arguments))
-                    f.write("\n")
-                    continue
-
-                command = entry.get("command")
-
-                if command:
-                    f.write(command)
-                    f.write("\n")
-        PY
-
-        test -f bear-build.log
-
-    - name: Verify MLGO Flag from build.log
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "MLGO FLAG VERIFICATION"
-        echo "========================================"
-
-        TARGET="-mllvm -regalloc-enable-advisor=release"
-
-        python3 - <<'PY'
-        import json
-        import shlex
-
-        with open("compile_commands.json", "r", encoding="utf-8") as f:
-            commands = json.load(f)
-
-        with open("build.log", "a", encoding="utf-8") as log:
-
-            log.write("\n")
-            log.write("========================================\n")
-            log.write("BEAR CLANG COMMANDS\n")
-            log.write("========================================\n")
-
-            for entry in commands:
-
-                arguments = entry.get("arguments")
-
-                if arguments:
-                    log.write(shlex.join(arguments))
-                    log.write("\n")
-                    continue
-
-                command = entry.get("command")
-
-                if command:
-                    log.write(command)
-                    log.write("\n")
-        PY
-
-        if [ "${{ matrix.mlgo }}" = "with" ]; then
-
-          if grep -Fq -- "$TARGET" build.log; then
-            echo "[OK] MLGO Release flag found in build.log"
+      - name: Verify Inline MLGO
+        run: |
+          set -e
+          echo "========================================"
+          echo "INLINE MLGO VERIFICATION"
+          echo "========================================"
+          TARGET="-mllvm -enable-ml-inliner=release"
+          REMARK="-Rpass=inline-ml"
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[OK] Inline MLGO release flag found"
+              grep -Fn -- "$TARGET" build.log
+            else
+              echo "[ERROR] Inline MLGO release flag NOT found"
+              exit 1
+            fi
             echo
-            echo "=== MLGO MATCH ==="
-            grep -Fn -- "$TARGET" build.log
+            echo "=== INLINE MLGO REMARKS ==="
+            if grep -Fq -- "$REMARK" build.log; then
+              echo "[OK] -Rpass=inline-ml found"
+              grep -Fn -- "$REMARK" build.log
+            else
+              echo "[ERROR] -Rpass=inline-ml NOT found"
+              exit 1
+            fi
           else
-            echo "[ERROR] MLGO Release flag NOT found in build.log"
-            exit 1
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[ERROR] Inline MLGO release flag found in MLGO-OFF build"
+              grep -Fn -- "$TARGET" build.log
+              exit 1
+            else
+              echo "[OK] Inline MLGO release flag not found in MLGO-OFF build"
+            fi
           fi
 
-        else
+      - name: Scan MLGO Flags
+        run: |
+          set -e
+          echo "========================================"
+          echo "MLGO FLAG SCAN"
+          echo "========================================"
+          grep -Ein '(^|[[:space:]])(-mllvm|.*mlgo.*|.*regalloc.*)' build.log || true
+          echo "========================================"
+          echo "MLGO FLAG SCAN COMPLETE"
+          echo "========================================"
 
-          if grep -Fq -- "$TARGET" build.log; then
-            echo "[ERROR] MLGO Release flag found in MLGO-OFF build.log"
+      # ============================================================
+      # Verify gc-sections in the actual link command.
+      #
+      # --gc-sections is a LINKER flag (LDFLAGS_vmlinux), not a
+      # per-file compile flag, so it never appears in
+      # compile_commands.json / bear-build.log (those only record
+      # per-source-file compile invocations). It only shows up in
+      # make's own output for the final link step, and only when
+      # that step is run with V=1 (otherwise make prints the short
+      # "LD vmlinux" form instead of the full command line).
+      #
+      # To verify it without a full rebuild: delete only the final
+      # vmlinux binary (all .o files stay cached from the previous
+      # step) and re-run just the link step with V=1.
+      # ============================================================
+      - name: Verify gc-sections in Link Command
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          echo "========================================"
+          echo "FORCING RELINK WITH VERBOSE OUTPUT"
+          echo "========================================"
+          rm -f out/vmlinux
+          make V=1 \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vmlinux \
+            2>&1 | tee link-verbose.log
+          test -f out/vmlinux
+          echo
+          echo "========================================"
+          echo "SEARCHING FOR --gc-sections IN LINK COMMAND"
+          echo "========================================"
+          if grep -n "gc-sections" link-verbose.log; then
             echo
-            echo "=== UNEXPECTED MLGO MATCH ==="
-            grep -Fn -- "$TARGET" build.log
-            exit 1
+            echo "[OK] --gc-sections found in the actual link command"
           else
-            echo "[OK] MLGO Release flag not found in MLGO-OFF build.log"
-          fi
-
-        fi
-
-    - name: Verify Inline MLGO
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "INLINE MLGO VERIFICATION"
-        echo "========================================"
-
-        TARGET="-mllvm -enable-ml-inliner=release"
-        REMARK="-Rpass=inline-ml"
-
-        if [ "${{ matrix.mlgo }}" = "with" ]; then
-
-          if grep -Fq -- "$TARGET" build.log; then
-            echo "[OK] Inline MLGO release flag found"
-            grep -Fn -- "$TARGET" build.log
-          else
-            echo "[ERROR] Inline MLGO release flag NOT found"
+            echo
+            echo "[FAIL] --gc-sections NOT found in the link command"
+            echo "[FAIL] LD_DEAD_CODE_DATA_ELIMINATION linker step may not be active"
             exit 1
           fi
 
-          echo
-          echo "=== INLINE MLGO REMARKS ==="
+      - name: Measure vmlinux
+        run: |
+          set -e
+          test -f out/vmlinux
+          SIZE=$(stat -c '%s' out/vmlinux)
+          echo "========================================"
+          echo "MLGO MODE: ${{ matrix.mlgo }}"
+          echo "vmlinux size: $SIZE bytes"
+          echo "========================================"
+          echo "MLGO=${{ matrix.mlgo }}" > vmlinux-size.txt
+          echo "VMLINUX_SIZE=$SIZE" >> vmlinux-size.txt
 
-          if grep -Fq -- "$REMARK" build.log; then
-            echo "[OK] -Rpass=inline-ml found"
-            grep -Fn -- "$REMARK" build.log
-          else
-            echo "[ERROR] -Rpass=inline-ml NOT found"
-            exit 1
-          fi
-
-        else
-
-          if grep -Fq -- "$TARGET" build.log; then
-            echo "[ERROR] Inline MLGO release flag found in MLGO-OFF build"
-            grep -Fn -- "$TARGET" build.log
-            exit 1
-          else
-            echo "[OK] Inline MLGO release flag not found in MLGO-OFF build"
-          fi
-
-        fi
-
-    - name: Scan MLGO Flags
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "MLGO FLAG SCAN"
-        echo "========================================"
-
-        grep -Ein \
-          '(^|[[:space:]])(-mllvm|.*mlgo.*|.*regalloc.*)' \
-          build.log || true
-
-        echo "========================================"
-        echo "MLGO FLAG SCAN COMPLETE"
-        echo "========================================"
-
-    # ============================================================
-    # Verify gc-sections in the actual link command.
-    #
-    # --gc-sections is a LINKER flag (LDFLAGS_vmlinux), not a
-    # per-file compile flag, so it never appears in
-    # compile_commands.json / bear-build.log (those only record
-    # per-source-file compile invocations). It only shows up in
-    # make's own output for the final link step, and only when
-    # that step is run with V=1 (otherwise make prints the short
-    # "LD vmlinux" form instead of the full command line).
-    #
-    # To verify it without a full rebuild: delete only the final
-    # vmlinux binary (all .o files stay cached from the previous
-    # step) and re-run just the link step with V=1.
-    # ============================================================
-    - name: Verify gc-sections in Link Command
-      run: |
-        set -e
-
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        echo "========================================"
-        echo "FORCING RELINK WITH VERBOSE OUTPUT"
-        echo "========================================"
-
-        rm -f out/vmlinux
-
-        make V=1 \
-          O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          CROSS_COMPILE="$CROSS_COMPILE" \
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-          CLANG_TRIPLE="$CLANG_TRIPLE" \
-          vmlinux \
-          2>&1 | tee link-verbose.log
-
-        test -f out/vmlinux
-
-        echo
-        echo "========================================"
-        echo "SEARCHING FOR --gc-sections IN LINK COMMAND"
-        echo "========================================"
-
-        if grep -n "gc-sections" link-verbose.log; then
-          echo
-          echo "[OK] --gc-sections found in the actual link command"
-        else
-          echo
-          echo "[FAIL] --gc-sections NOT found in the link command"
-          echo "[FAIL] LD_DEAD_CODE_DATA_ELIMINATION linker step may not be active"
-          exit 1
-        fi
-
-    - name: Measure vmlinux
-      run: |
-        set -e
-
-        test -f out/vmlinux
-
-        SIZE=$(stat -c '%s' out/vmlinux)
-
-        echo "========================================"
-        echo "MLGO MODE: ${{ matrix.mlgo }}"
-        echo "vmlinux size: $SIZE bytes"
-        echo "========================================"
-
-        echo "MLGO=${{ matrix.mlgo }}" > vmlinux-size.txt
-        echo "VMLINUX_SIZE=$SIZE" >> vmlinux-size.txt
-
-    - name: Upload MLGO Evidence
-      uses: actions/upload-artifact@v4
-      with:
-        name: mlgo-evidence-${{ matrix.mlgo }}
-        path: |
-          k/compile_commands.json
-          k/bear-build.log
-          k/build.log
-          k/link-verbose.log
-          k/vmlinux-size.txt
+      - name: Upload MLGO Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlgo-evidence-${{ matrix.mlgo }}
+          path: |
+            k/compile_commands.json
+            k/bear-build.log
+            k/build.log
+            k/link-verbose.log
+            k/vmlinux-size.txt
