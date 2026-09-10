@@ -91,7 +91,7 @@ jobs:
           BR2_LINUX_KERNEL=y
           BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
           BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="../hatan/arch/arm64/configs/vendor/violet-perf_defconfig"
-          BR2_KERNEL_HEADERS_4_14=y
+          BR2_KERNEL_HEADERS_AS_KERNEL=y
           EOF
 
           cat > local.mk <<EOF
@@ -99,6 +99,11 @@ jobs:
           EOF
 
           make olddefconfig
+
+          echo "========================================"
+          echo "Legacy check:"
+          echo "========================================"
+          grep -E "^BR2_LEGACY|^BR2_KERNEL_HEADERS" .config || true
 
       # ============================================================
       # 6. BUILD
