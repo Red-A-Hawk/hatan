@@ -1,4 +1,4 @@
-name: Build Hatan Kernel with Buildroot v2
+name: Build Hatan Kernel with Buildroot
 
 on:
   workflow_dispatch:
@@ -8,10 +8,6 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-
-      # ============================================================
-      # 1. CHECKOUT BUILDROOT
-      # ============================================================
       - name: Checkout Buildroot
         uses: actions/checkout@v4
         with:
@@ -19,9 +15,6 @@ jobs:
           path: buildroot
           fetch-depth: 0
 
-      # ============================================================
-      # 2. CHECKOUT HATAN KERNEL
-      # ============================================================
       - name: Checkout Hatan Kernel
         uses: actions/checkout@v4
         with:
@@ -30,9 +23,6 @@ jobs:
           path: hatan
           fetch-depth: 0
 
-      # ============================================================
-      # 3. INSTALL DEPENDENCIES
-      # ============================================================
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -50,13 +40,9 @@ jobs:
             wget \
             python3
 
-      # ============================================================
-      # 4. VERIFY SOURCES
-      # ============================================================
       - name: Verify sources
         run: |
           set -e
-
           echo "============================================"
           echo "BUILDROOT"
           echo "============================================"
@@ -79,9 +65,6 @@ jobs:
           test -f arch/arm64/configs/vendor/violet-perf_defconfig
           ls -lh arch/arm64/configs/vendor/violet-perf_defconfig
 
-      # ============================================================
-      # 5. CONFIGURE BUILDROOT
-      # ============================================================
       - name: Configure Buildroot
         working-directory: buildroot
         run: |
@@ -119,40 +102,61 @@ jobs:
           echo "============================================"
           cat local.mk
 
-      # ============================================================
-      # 6. BUILD
-      # ============================================================
-      - name: Build
+      - name: Check Hatan UAPI headers
         working-directory: buildroot
         run: |
           set -e
 
+          echo "============================================"
+          echo "HATAN HEADER"
+          echo "============================================"
+
+          grep -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            ../hatan/arch/arm64/include/uapi/asm/sigcontext.h || true
+
+          echo
+          echo "============================================"
+          echo "SYSROOT HEADER"
+          echo "============================================"
+
+          grep -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            output/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/asm/sigcontext.h || true
+
+          echo
+          echo "============================================"
+          echo "SEARCH ALL SYSROOT / KERNEL HEADERS"
+          echo "============================================"
+
+          grep -R -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            output/host/aarch64-buildroot-linux-gnu/sysroot/usr/include \
+            output/build/linux-*/usr/include \
+            2>/dev/null | head -100 || true
+
+      - name: Build
+        working-directory: buildroot
+        run: |
+          set -e
           make -j"$(nproc)"
 
-      # ============================================================
-      # 7. SHOW OUTPUTS
-      # ============================================================
       - name: Show outputs
         working-directory: buildroot
         run: |
           echo "============================================"
           echo "BUILDROOT OUTPUT"
           echo "============================================"
-
           find output/images -maxdepth 2 -type f -printf '%p\n' | sort
 
           echo
           echo "============================================"
           echo "KERNEL OUTPUT"
           echo "============================================"
-
           find output/build -path "*/arch/arm64/boot/*" \
             -type f \
             -printf '%p\n' 2>/dev/null | sort || true
 
-      # ============================================================
-      # 8. UPLOAD BUILDROOT IMAGES
-      # ============================================================
       - name: Upload Buildroot images
         uses: actions/upload-artifact@v4
         with:
@@ -161,9 +165,6 @@ jobs:
             buildroot/output/images/**
           if-no-files-found: warn
 
-      # ============================================================
-      # 9. UPLOAD KERNEL OUTPUTS
-      # ============================================================
       - name: Upload kernel outputs
         uses: actions/upload-artifact@v4
         with:
