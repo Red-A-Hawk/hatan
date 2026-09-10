@@ -1,0 +1,395 @@
+name: Create and Sync Hawki-violet
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-and-sync:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT HATAN 16
+      # ============================================================
+      - name: Checkout hatan 16
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+          persist-credentials: false
+
+      # ============================================================
+      # 2. CREATE HAWKI-VIOLET
+      # ============================================================
+      - name: Create Hawki-violet repository
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          OWNER="Red-A-Hawk"
+          REPO="Hawki-violet"
+
+          echo "Checking repository..."
+
+          if gh repo view "$OWNER/$REPO" >/dev/null 2>&1; then
+            echo "Repository already exists."
+          else
+            echo "Repository does not exist."
+            echo "Creating Public repository..."
+
+            gh repo create "$OWNER/$REPO" \
+              --public \
+              --description "Hawki-violet kernel synchronization repository"
+
+            echo "Repository created successfully."
+          fi
+
+      # ============================================================
+      # 3. PREPARE TBYOOL 17.0
+      # ============================================================
+      - name: Prepare tbyool 17.0
+        run: |
+          set -e
+
+          rm -rf tbyool-source
+
+          git clone \
+            --branch 17.0 \
+            --single-branch \
+            https://github.com/tbyool/android_kernel_xiaomi_sm6150.git \
+            tbyool-source
+
+          cd tbyool-source
+
+          git fetch --tags --force
+
+          echo "tbyool source commit:"
+          git rev-parse HEAD
+
+      # ============================================================
+      # 4. PREPARE MANIPVLATOR STABLE
+      # ============================================================
+      - name: Prepare manipvlator stable
+        run: |
+          set -e
+
+          rm -rf manipvlator-source
+
+          git clone \
+            --branch stable \
+            --single-branch \
+            https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git \
+            manipvlator-source
+
+          cd manipvlator-source
+
+          git fetch --tags --force
+
+          echo "manipvlator source commit:"
+          git rev-parse HEAD
+
+      # ============================================================
+      # 5. SYNC TBYOOL 17.0
+      # ============================================================
+      - name: Sync tbyool 17.0
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          cd tbyool-source
+
+          git remote remove target 2>/dev/null || true
+
+          git remote add target \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+          echo "=============================================="
+          echo "tbyool/android_kernel_xiaomi_sm6150"
+          echo "branch: 17.0"
+          echo "        ↓"
+          echo "Hawki-violet"
+          echo "branch: 17.0"
+          echo "=============================================="
+
+          git push target \
+            HEAD:refs/heads/17.0 \
+            --force
+
+          echo "tbyool 17.0 sync completed."
+
+      # ============================================================
+      # 6. SYNC MANIPVLATOR STABLE
+      # ============================================================
+      - name: Sync manipvlator stable
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          cd manipvlator-source
+
+          git remote remove target 2>/dev/null || true
+
+          git remote add target \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+          echo "=============================================="
+          echo "manipvlator/los_kernel_xiaomi_sm6150"
+          echo "branch: stable"
+          echo "        ↓"
+          echo "Hawki-violet"
+          echo "branch: stable"
+          echo "=============================================="
+
+          git push target \
+            HEAD:refs/heads/stable \
+            --force
+
+          echo "manipvlator stable sync completed."
+
+      # ============================================================
+      # 7. CREATE INDEPENDENT UPDATE BRANCH
+      # ============================================================
+      - name: Create update branch
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          rm -rf update-branch
+
+          mkdir update-branch
+
+          cd update-branch
+
+          git init
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan update
+
+          mkdir -p .github/workflows
+
+          echo "Creating update.yml..."
+
+          cat > .github/workflows/update.yml <<'EOF'
+          name: Update Hawki-violet
+
+          on:
+            workflow_dispatch:
+
+            schedule:
+              - cron: "0 */6 * * *"
+
+          permissions:
+            contents: write
+
+          jobs:
+            update:
+              runs-on: ubuntu-24.04
+
+              steps:
+
+                # ============================================================
+                # 1. CHECKOUT UPDATE BRANCH
+                # ============================================================
+                - name: Checkout update branch
+                  uses: actions/checkout@v4
+                  with:
+                    ref: update
+                    fetch-depth: 0
+                    persist-credentials: false
+
+                # ============================================================
+                # 2. CONFIGURE GIT
+                # ============================================================
+                - name: Configure Git
+                  run: |
+                    set -e
+
+                    git config user.name "github-actions[bot]"
+                    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+                # ============================================================
+                # 3. UPDATE 17.0 FROM TBYOOL
+                # ============================================================
+                - name: Update 17.0 from tbyool
+                  env:
+                    GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+                  run: |
+                    set -e
+
+                    rm -rf tbyool-source
+
+                    git clone \
+                      --branch 17.0 \
+                      --single-branch \
+                      https://github.com/tbyool/android_kernel_xiaomi_sm6150.git \
+                      tbyool-source
+
+                    cd tbyool-source
+
+                    echo "Source commit:"
+                    git rev-parse HEAD
+
+                    git remote add target \
+                      "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+                    echo "Syncing tbyool 17.0..."
+
+                    git push target \
+                      HEAD:refs/heads/17.0 \
+                      --force
+
+                    echo "17.0 update completed."
+
+                # ============================================================
+                # 4. UPDATE STABLE FROM MANIPVLATOR
+                # ============================================================
+                - name: Update stable from manipvlator
+                  env:
+                    GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+                  run: |
+                    set -e
+
+                    rm -rf manipvlator-source
+
+                    git clone \
+                      --branch stable \
+                      --single-branch \
+                      https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git \
+                      manipvlator-source
+
+                    cd manipvlator-source
+
+                    echo "Source commit:"
+                    git rev-parse HEAD
+
+                    git remote add target \
+                      "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+                    echo "Syncing manipvlator stable..."
+
+                    git push target \
+                      HEAD:refs/heads/stable \
+                      --force
+
+                    echo "stable update completed."
+
+                # ============================================================
+                # 5. VERIFY BOTH BRANCHES
+                # ============================================================
+                - name: Verify synchronized branches
+                  run: |
+                    set -e
+
+                    echo "=============================================="
+                    echo "Verifying Hawki-violet"
+                    echo "=============================================="
+
+                    TBYOOL_COMMIT=$(git -C tbyool-source rev-parse HEAD)
+                    MANIPVLATOR_COMMIT=$(git -C manipvlator-source rev-parse HEAD)
+
+                    HAWKI_17_COMMIT=$(git ls-remote \
+                      https://github.com/Red-A-Hawk/Hawki-violet.git \
+                      refs/heads/17.0 | awk '{print $1}')
+
+                    HAWKI_STABLE_COMMIT=$(git ls-remote \
+                      https://github.com/Red-A-Hawk/Hawki-violet.git \
+                      refs/heads/stable | awk '{print $1}')
+
+                    echo ""
+                    echo "tbyool 17.0:"
+                    echo "$TBYOOL_COMMIT"
+
+                    echo "Hawki-violet 17.0:"
+                    echo "$HAWKI_17_COMMIT"
+
+                    echo ""
+                    echo "manipvlator stable:"
+                    echo "$MANIPVLATOR_COMMIT"
+
+                    echo "Hawki-violet stable:"
+                    echo "$HAWKI_STABLE_COMMIT"
+
+                    echo ""
+                    echo "=============================================="
+                    echo "Checking 17.0"
+                    echo "=============================================="
+
+                    test "$TBYOOL_COMMIT" = "$HAWKI_17_COMMIT"
+
+                    echo "17.0: OK"
+
+                    echo ""
+                    echo "=============================================="
+                    echo "Checking stable"
+                    echo "=============================================="
+
+                    test "$MANIPVLATOR_COMMIT" = "$HAWKI_STABLE_COMMIT"
+
+                    echo "stable: OK"
+
+                    echo ""
+                    echo "=============================================="
+                    echo "ALL SYNCS VERIFIED SUCCESSFULLY"
+                    echo "=============================================="
+          EOF
+
+          git add .github/workflows/update.yml
+
+          git commit \
+            -m "Add update workflow"
+
+          git remote add origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+          git push origin \
+            HEAD:refs/heads/update \
+            --force
+
+          echo "=============================================="
+          echo "update branch created successfully."
+          echo "=============================================="
+
+      # ============================================================
+      # 8. VERIFY ALL BRANCHES
+      # ============================================================
+      - name: Verify Hawki-violet branches
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          echo "=============================================="
+          echo "Final verification"
+          echo "=============================================="
+
+          git ls-remote \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git" \
+            refs/heads/17.0
+
+          git ls-remote \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git" \
+            refs/heads/stable
+
+          git ls-remote \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git" \
+            refs/heads/update
+
+          echo ""
+          echo "=============================================="
+          echo "Hawki-violet created successfully."
+          echo "=============================================="
+          echo ""
+          echo "Branches:"
+          echo "  17.0   <- tbyool/android_kernel_xiaomi_sm6150:17.0"
+          echo "  stable <- manipvlator/los_kernel_xiaomi_sm6150:stable"
+          echo "  update <- .github/workflows/update.yml"
+          echo ""
+          echo "Automatic synchronization is handled by update.yml."
+          echo "=============================================="
