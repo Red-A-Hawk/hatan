@@ -1,4 +1,4 @@
-name: Build Hatan with Official Buildroot v4
+name: Build Hatan with Official Buildroot v5
 
 on:
   workflow_dispatch:
@@ -114,6 +114,7 @@ jobs:
           echo
           echo "Hatan sigcontext.h:"
           test -f hatan/arch/arm64/include/uapi/asm/sigcontext.h
+
           grep -nE \
             'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
             hatan/arch/arm64/include/uapi/asm/sigcontext.h
@@ -162,7 +163,7 @@ jobs:
           make olddefconfig
 
       # ============================================================
-      # 7. VERIFY CONFIG AND LOCAL.MK
+      # 7. VERIFY OVERRIDE CONFIGURATION
       # ============================================================
       - name: Verify override configuration
         working-directory: buildroot
@@ -205,7 +206,7 @@ jobs:
             || true
 
       # ============================================================
-      # 9. SHOW IMPORTANT PATHS
+      # 9. SHOW ACTUAL PATHS
       # ============================================================
       - name: Inspect Buildroot paths
         working-directory: buildroot
@@ -218,22 +219,22 @@ jobs:
 
           echo
           echo "BUILD_DIR:"
-          make -s printvars VARS='BUILD_DIR' QUOTE=sh || true
+          make -s printvars VARS='BUILD_DIR' QUOTE=sh
 
           echo
           echo "LINUX_BASENAME:"
-          make -s printvars VARS='LINUX_BASENAME' QUOTE=sh || true
+          make -s printvars VARS='LINUX_BASENAME' QUOTE=sh
 
           echo
           echo "LINUX_DIR:"
-          make -s printvars VARS='LINUX_DIR' QUOTE=sh || true
+          make -s printvars VARS='LINUX_DIR' QUOTE=sh
 
           echo
           echo "LINUX_OVERRIDE_SRCDIR:"
-          make -s printvars VARS='LINUX_OVERRIDE_SRCDIR' QUOTE=sh || true
+          make -s printvars VARS='LINUX_OVERRIDE_SRCDIR' QUOTE=sh
 
       # ============================================================
-      # 10. PREPARE LINUX SOURCE FROM HATAN
+      # 10. PREPARE LINUX SOURCE
       # ============================================================
       - name: Prepare Hatan Linux source
         working-directory: buildroot
@@ -241,87 +242,117 @@ jobs:
           set -e
 
           echo "=============================================="
-          echo "PREPARE LINUX SOURCE"
+          echo "PREPARE HATAN LINUX SOURCE"
           echo "=============================================="
 
           make linux-rebuild
 
       # ============================================================
-      # 11. VERIFY OUTPUT BUILD DIRECTORIES
+      # 11. VERIFY LINUX-CUSTOM
       # ============================================================
-      - name: Verify Linux source directory
+      - name: Verify Linux custom source
         working-directory: buildroot
         run: |
           set -e
 
           echo "=============================================="
-          echo "OUTPUT/BUILD DIRECTORIES"
+          echo "LINUX-CUSTOM AFTER REBUILD"
           echo "=============================================="
 
-          find output/build \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            -print \
-            | sort
+          LINUX_DIR="$(
+            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
+            | tail -n 1
+          )"
 
           echo
-          echo "=============================================="
-          echo "LINUX DIRECTORY"
-          echo "=============================================="
-
-          LINUX_DIR="$(
-            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
-            | tail -n 1
-          )"
-
           echo "LINUX_DIR=$LINUX_DIR"
 
-          if [ -d "$LINUX_DIR" ]; then
-            echo "LINUX_DIR exists."
-          else
-            echo "LINUX_DIR does not exist."
-            exit 1
-          fi
+          echo
+          echo "Directory:"
+          ls -lad "$LINUX_DIR"
 
-      # ============================================================
-      # 12. VERIFY HATAN FILES INSIDE BUILDROOT LINUX SOURCE
-      # ============================================================
-      - name: Verify Hatan source inside Buildroot
-        working-directory: buildroot
-        run: |
-          set -e
-
-          echo "=============================================="
-          echo "VERIFY HATAN SOURCE"
-          echo "=============================================="
-
-          LINUX_DIR="$(
-            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
-            | tail -n 1
-          )"
-
-          echo "LINUX_DIR=$LINUX_DIR"
+          echo
+          echo "Contents:"
+          ls -la "$LINUX_DIR" | head -n 30
 
           echo
           echo "Kernel Makefile:"
           test -f "$LINUX_DIR/Makefile"
           echo "OK"
 
-          echo
-          echo "Hatan sigcontext.h:"
-          test -f \
-            "$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+      # ============================================================
+      # 12. VERIFY HATAN SOURCE WAS COPIED
+      # ============================================================
+      - name: Verify Hatan source inside Linux custom
+        working-directory: buildroot
+        run: |
+          set -e
 
-          echo "OK"
+          echo "=============================================="
+          echo "VERIFY HATAN SOURCE INSIDE LINUX-CUSTOM"
+          echo "=============================================="
+
+          LINUX_DIR="$(
+            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
+            | tail -n 1
+          )"
+
+          SIGCONTEXT="$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          echo
+          echo "Linux source:"
+          echo "$LINUX_DIR"
+
+          echo
+          echo "sigcontext.h:"
+          echo "$SIGCONTEXT"
+
+          test -f "$SIGCONTEXT"
+          echo "sigcontext.h EXISTS"
 
           echo
           grep -nE \
             'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
-            "$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+            "$SIGCONTEXT"
 
       # ============================================================
-      # 13. INSTALL KERNEL HEADERS
+      # 13. COMPARE HATAN SOURCE WITH LINUX-CUSTOM
+      # ============================================================
+      - name: Compare Hatan and Buildroot Linux source
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "=============================================="
+          echo "COMPARE HATAN VS LINUX-CUSTOM"
+          echo "=============================================="
+
+          LINUX_DIR="$(
+            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
+            | tail -n 1
+          )"
+
+          SOURCE="../hatan/arch/arm64/include/uapi/asm/sigcontext.h"
+          DEST="$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          echo
+          echo "SOURCE:"
+          echo "$SOURCE"
+
+          echo
+          echo "DEST:"
+          echo "$DEST"
+
+          echo
+          echo "Running cmp..."
+
+          cmp "$SOURCE" "$DEST"
+
+          echo
+          echo "COMPARE RESULT: IDENTICAL"
+      
+      # ============================================================
+      # 14. INSTALL KERNEL HEADERS
       # ============================================================
       - name: Install kernel headers
         working-directory: buildroot
@@ -335,7 +366,7 @@ jobs:
           make linux-headers
 
       # ============================================================
-      # 14. CHECK SYSROOT SIGCONTEXT
+      # 15. CHECK SYSROOT HEADERS
       # ============================================================
       - name: Check Buildroot sysroot headers
         working-directory: buildroot
@@ -353,7 +384,7 @@ jobs:
             | sort
 
       # ============================================================
-      # 15. BUILD
+      # 16. BUILD BUILDROOT
       # ============================================================
       - name: Build Buildroot
         working-directory: buildroot
@@ -361,13 +392,13 @@ jobs:
           set -e
 
           echo "=============================================="
-          echo "BUILD"
+          echo "BUILD BUILDROOT"
           echo "=============================================="
 
           make -j"$(nproc)"
 
       # ============================================================
-      # 16. SHOW OUTPUTS
+      # 17. SHOW OUTPUT IMAGES
       # ============================================================
       - name: Show output images
         if: always()
@@ -386,7 +417,7 @@ jobs:
           fi
 
       # ============================================================
-      # 17. UPLOAD OUTPUTS
+      # 18. UPLOAD BUILDROOT OUTPUT
       # ============================================================
       - name: Upload Buildroot output
         if: always()
@@ -397,7 +428,7 @@ jobs:
           if-no-files-found: ignore
 
       # ============================================================
-      # 18. UPLOAD DIAGNOSTIC BUILD DIRECTORY
+      # 19. UPLOAD LINUX DIAGNOSTIC SOURCE
       # ============================================================
       - name: Upload Linux diagnostic source
         if: always()
