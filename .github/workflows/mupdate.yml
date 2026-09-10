@@ -350,7 +350,7 @@ jobs:
 
           echo
           echo "COMPARE RESULT: IDENTICAL"
-      
+
       # ============================================================
       # 14. INSTALL KERNEL HEADERS
       # ============================================================
@@ -366,22 +366,137 @@ jobs:
           make linux-headers
 
       # ============================================================
-      # 15. CHECK SYSROOT HEADERS
+      # 15. PRE-BUILD KERNEL UAPI DIAGNOSTIC
       # ============================================================
-      - name: Check Buildroot sysroot headers
+      - name: Pre-build kernel UAPI diagnostic
         working-directory: buildroot
         run: |
           set -e
 
           echo "=============================================="
-          echo "SYSROOT SIGCONTEXT"
+          echo "PRE-BUILD KERNEL UAPI DIAGNOSTIC"
           echo "=============================================="
 
-          find output/host \
-            -type f \
-            -path '*/usr/include/asm/sigcontext.h' \
+          echo
+          echo "=== 1. HATAN SOURCE ==="
+
+          HATAN_SIGCONTEXT="../hatan/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          test -f "$HATAN_SIGCONTEXT"
+          echo "Hatan sigcontext.h: OK"
+
+          grep -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            "$HATAN_SIGCONTEXT"
+
+          echo
+          echo "=== 2. LINUX-CUSTOM ==="
+
+          LINUX_DIR="$(
+            make -s printvars VARS='LINUX_DIR' QUOTE=sh \
+            | tail -n 1
+          )"
+
+          LINUX_SIGCONTEXT="$LINUX_DIR/arch/arm64/include/uapi/asm/sigcontext.h"
+
+          echo "LINUX_DIR=$LINUX_DIR"
+
+          test -f "$LINUX_SIGCONTEXT"
+          echo "linux-custom sigcontext.h: OK"
+
+          grep -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            "$LINUX_SIGCONTEXT"
+
+          echo
+          echo "=== 3. COMPARE HATAN VS LINUX-CUSTOM ==="
+
+          cmp "$HATAN_SIGCONTEXT" "$LINUX_SIGCONTEXT"
+
+          echo "Hatan and linux-custom: IDENTICAL"
+
+          echo
+          echo "=== 4. SYSROOT ==="
+
+          SYSROOT="output/host/aarch64-buildroot-linux-gnu/sysroot/usr/include"
+          SYSROOT_SIGCONTEXT="$SYSROOT/asm/sigcontext.h"
+
+          echo "SYSROOT=$SYSROOT"
+
+          find "$SYSROOT" \
+            -name sigcontext.h \
             -print \
             | sort
+
+          echo
+          echo "=== 5. SYSROOT SIGCONTEXT ==="
+
+          if [ -f "$SYSROOT_SIGCONTEXT" ]; then
+
+            echo "sysroot asm/sigcontext.h: FOUND"
+
+            grep -nE \
+              'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+              "$SYSROOT_SIGCONTEXT"
+
+          else
+
+            echo "ERROR: sysroot asm/sigcontext.h NOT FOUND"
+
+          fi
+
+          echo
+          echo "=== 6. GCC INCLUDE TEST ==="
+
+          GCC="output/host/bin/aarch64-buildroot-linux-gnu-gcc"
+
+          test -x "$GCC"
+
+          echo "GCC:"
+          "$GCC" --version | head -n 1
+
+          echo
+          echo "Testing #include <asm/sigcontext.h>..."
+
+          printf '#include <asm/sigcontext.h>\n' \
+            | "$GCC" -E -H -x c - \
+            >/tmp/sigcontext-preprocessed.txt \
+            2>/tmp/sigcontext-includes.txt
+
+          cat /tmp/sigcontext-includes.txt
+
+          echo
+          echo "GCC include test: PASS"
+
+          echo
+          echo "=== 7. STRUCT TEST ==="
+
+          cat > /tmp/test_sigcontext.c <<'EOF'
+          #include <asm/sigcontext.h>
+
+          int test_sigcontext(void)
+          {
+              struct _aarch64_ctx a;
+              struct fpsimd_context b;
+
+              return (int)FPSIMD_MAGIC + sizeof(a) + sizeof(b);
+          }
+          EOF
+
+          "$GCC" \
+            -c /tmp/test_sigcontext.c \
+            -o /tmp/test_sigcontext.o
+
+          test -f /tmp/test_sigcontext.o
+
+          echo "struct _aarch64_ctx: OK"
+          echo "struct fpsimd_context: OK"
+          echo "FPSIMD_MAGIC: OK"
+
+          echo
+          echo "=============================================="
+          echo "PRE-BUILD KERNEL UAPI DIAGNOSTIC: PASS"
+          echo "=============================================="
 
       # ============================================================
       # 16. BUILD BUILDROOT
