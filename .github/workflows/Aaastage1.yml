@@ -203,7 +203,7 @@ jobs:
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             KCFLAGS="$KCFLAGS" \
             > >(tee build.log) \
-            2> >(tee -a build.log | sed '/-Rpass=inline-ml/d' >&2)
+            2> >(tee -a build.log | sed '/remark:.*\[-Rpass=inline/d' >&2)
           test -f compile_commands.json
           python3 - <<'PY'
           import json
