@@ -27,9 +27,6 @@ jobs:
           fetch-depth: 1
           path: k
 
-      # ============================================================
-      # Setup 16GB Swap
-      # ============================================================
       - name: Setup 16GB Swap
         run: |
           set -e
@@ -205,7 +202,8 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             KCFLAGS="$KCFLAGS" \
-            2>&1 | tee build.log | sed '/-Rpass=inline-ml/d'
+            > >(tee build.log) \
+            2> >(tee -a build.log | sed '/-Rpass=inline-ml/d' >&2)
           test -f compile_commands.json
           python3 - <<'PY'
           import json
@@ -322,21 +320,6 @@ jobs:
           echo "MLGO FLAG SCAN COMPLETE"
           echo "========================================"
 
-      # ============================================================
-      # Verify gc-sections in the actual link command.
-      #
-      # --gc-sections is a LINKER flag (LDFLAGS_vmlinux), not a
-      # per-file compile flag, so it never appears in
-      # compile_commands.json / bear-build.log (those only record
-      # per-source-file compile invocations). It only shows up in
-      # make's own output for the final link step, and only when
-      # that step is run with V=1 (otherwise make prints the short
-      # "LD vmlinux" form instead of the full command line).
-      #
-      # To verify it without a full rebuild: delete only the final
-      # vmlinux binary (all .o files stay cached from the previous
-      # step) and re-run just the link step with V=1.
-      # ============================================================
       - name: Verify gc-sections in Link Command
         run: |
           set -e
@@ -378,6 +361,45 @@ jobs:
             exit 1
           fi
 
+      - name: Create Image.gz
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          make \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            Image.gz
+          test -f out/arch/arm64/boot/Image.gz
+
+      - name: Measure Image.gz
+        run: |
+          set -e
+          IMAGE="out/arch/arm64/boot/Image.gz"
+          test -f "$IMAGE"
+          BYTES=$(stat -c '%s' "$IMAGE")
+          SIZE_MB=$(python3 -c "print(f'{int($BYTES) / (1024 * 1024):.2f}')")
+          echo "========================================"
+          echo "IMAGE.GZ SIZE"
+          echo "========================================"
+          echo "Image.gz: ${SIZE_MB} MB"
+          echo "Exact bytes: ${BYTES} bytes"
+          echo "========================================"
+          echo "Image.gz: ${SIZE_MB} MB" > Image-size.txt
+          echo "Exact bytes: ${BYTES} bytes" >> Image-size.txt
+
       - name: Measure vmlinux
         run: |
           set -e
@@ -400,3 +422,5 @@ jobs:
             k/build.log
             k/link-verbose.log
             k/vmlinux-size.txt
+            k/Image-size.txt
+            k/out/arch/arm64/boot/Image.gz
