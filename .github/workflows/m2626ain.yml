@@ -1,4 +1,4 @@
-name: Build Hatan Kernel with Buildroot
+name: Build Hatan Kernel with Buildroot v2
 
 on:
   workflow_dispatch:
@@ -94,7 +94,7 @@ jobs:
 
           echo
           echo "============================================"
-          echo "FINAL BUILDROOT KERNEL CONFIG"
+          echo "FINAL HEADER CONFIG"
           echo "============================================"
 
           grep -E \
@@ -108,13 +108,40 @@ jobs:
 
           cat local.mk
 
-      - name: Check Hatan UAPI headers
+      - name: Prepare Buildroot kernel source
         working-directory: buildroot
         run: |
           set -e
 
           echo "============================================"
-          echo "HATAN HEADER"
+          echo "PREPARING KERNEL SOURCE"
+          echo "============================================"
+
+          make linux-source
+
+          echo
+          echo "============================================"
+          echo "LINUX SOURCE DIRECTORY"
+          echo "============================================"
+
+          ls -ld output/build/linux-* 2>/dev/null || true
+
+          echo
+          echo "============================================"
+          echo "CHECK SOURCE SIGCONTEXT"
+          echo "============================================"
+
+          find output/build/linux-* \
+            -path "*/arch/arm64/include/uapi/asm/sigcontext.h" \
+            -print 2>/dev/null || true
+
+      - name: Diagnose kernel headers
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "============================================"
+          echo "HATAN SOURCE HEADER"
           echo "============================================"
 
           grep -nE \
@@ -123,47 +150,77 @@ jobs:
 
           echo
           echo "============================================"
-          echo "SYSROOT HEADER"
+          echo "BUILDROOT KERNEL HEADER"
           echo "============================================"
 
           grep -nE \
             'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
-            output/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/asm/sigcontext.h || true
+            output/build/linux-*/arch/arm64/include/uapi/asm/sigcontext.h \
+            2>/dev/null || true
 
           echo
           echo "============================================"
-          echo "SEARCH ALL SYSROOT / KERNEL HEADERS"
+          echo "RUN KERNEL HEADERS INSTALL"
           echo "============================================"
 
-          grep -R -nE \
+          LINUX_DIR="$(find output/build -maxdepth 1 -type d -name 'linux-*' | head -n 1)"
+
+          echo "LINUX_DIR=$LINUX_DIR"
+
+          test -n "$LINUX_DIR"
+          test -d "$LINUX_DIR"
+
+          rm -rf /tmp/hatan-headers
+          mkdir -p /tmp/hatan-headers
+
+          cd "$LINUX_DIR"
+
+          make \
+            ARCH=arm64 \
+            INSTALL_HDR_PATH=/tmp/hatan-headers \
+            headers_install
+
+          cd ../..
+
+          echo
+          echo "============================================"
+          echo "TEMPORARY INSTALLED HEADERS"
+          echo "============================================"
+
+          find /tmp/hatan-headers \
+            -type f \
+            -name "sigcontext.h" \
+            -print 2>/dev/null | sort || true
+
+          echo
+          echo "============================================"
+          echo "TEMPORARY SIGCONTEXT CONTENT"
+          echo "============================================"
+
+          grep -nE \
             'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
-            output/host/aarch64-buildroot-linux-gnu/sysroot/usr/include \
-            output/build/linux-*/usr/include \
-            2>/dev/null | head -100 || true
+            /tmp/hatan-headers/usr/include/asm/sigcontext.h \
+            2>/dev/null || true
 
-      - name: Find sigcontext.h
-        working-directory: buildroot
-        run: |
-          set -e
-
+          echo
           echo "============================================"
-          echo "FIND SIGCONTEXT.H"
+          echo "BUILDROOT STAGING HEADER"
+          echo "============================================"
+
+          grep -nE \
+            'struct _aarch64_ctx|FPSIMD_MAGIC|struct fpsimd_context' \
+            output/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/asm/sigcontext.h \
+            2>/dev/null || true
+
+          echo
+          echo "============================================"
+          echo "ALL SIGCONTEXT HEADERS IN OUTPUT"
           echo "============================================"
 
           find output \
             -type f \
             -name "sigcontext.h" \
-            -print 2>/dev/null | sort
-
-          echo
-          echo "============================================"
-          echo "FIND AARCH64 SIGCONTEXT.H"
-          echo "============================================"
-
-          find output \
-            -type f \
-            -path "*/aarch64*/include/*/sigcontext.h" \
-            -print 2>/dev/null | sort
+            -print 2>/dev/null | sort || true
 
       - name: Build
         working-directory: buildroot
