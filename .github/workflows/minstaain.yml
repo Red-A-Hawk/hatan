@@ -1,0 +1,235 @@
+name: Inspect Blackxxxx Buildroot Kernel Headers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT BLACKXXXX BUILDROOT
+      # ============================================================
+      - name: Checkout Buildroot
+        uses: actions/checkout@v4
+        with:
+          repository: backslashxx/buildroot
+          path: buildroot
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. INSPECT BUILDROOT VERSION
+      # ============================================================
+      - name: Inspect Buildroot version
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "BUILDROOT VERSION"
+          echo "========================================"
+
+          if [ -f Makefile ]; then
+            grep -E '^BR2_VERSION|^VERSION' Makefile || true
+          fi
+
+          if [ -f Makefile.version ]; then
+            cat Makefile.version
+          fi
+
+          echo
+          echo "========================================"
+          echo "GIT COMMIT"
+          echo "========================================"
+
+          git rev-parse HEAD
+
+          echo
+          echo "========================================"
+          echo "GIT BRANCH"
+          echo "========================================"
+
+          git branch --show-current
+
+      # ============================================================
+      # 3. SEARCH KERNEL HEADERS CONFIG OPTIONS
+      # ============================================================
+      - name: Inspect kernel headers options
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "KERNEL HEADERS CONFIG OPTIONS"
+          echo "========================================"
+
+          grep -R -n -E \
+          'BR2_KERNEL_HEADERS_AS_KERNEL|BR2_KERNEL_HEADERS_VERSION|BR2_KERNEL_HEADERS_' \
+          toolchain package/linux-headers \
+          2>/dev/null || true
+
+      # ============================================================
+      # 4. SEARCH ALL KERNEL HEADER REFERENCES
+      # ============================================================
+      - name: Inspect all kernel header references
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "ALL KERNEL HEADER REFERENCES"
+          echo "========================================"
+
+          grep -R -n -E \
+          'kernel headers|kernel-headers|KERNEL_HEADERS|LINUX_HEADERS' \
+          toolchain package/linux-headers \
+          2>/dev/null | head -300 || true
+
+      # ============================================================
+      # 5. INSPECT LINUX HEADERS PACKAGE
+      # ============================================================
+      - name: Inspect linux headers package
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "LINUX HEADERS FILES"
+          echo "========================================"
+
+          find package/linux-headers \
+            -maxdepth 2 \
+            -type f \
+            -print \
+            | sort
+
+          echo
+          echo "========================================"
+          echo "LINUX HEADERS MAKEFILE"
+          echo "========================================"
+
+          if [ -f package/linux-headers/linux-headers.mk ]; then
+            sed -n '1,260p' package/linux-headers/linux-headers.mk
+          fi
+
+      # ============================================================
+      # 6. INSPECT TOOLCHAIN CONFIG
+      # ============================================================
+      - name: Inspect toolchain headers configuration
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "TOOLCHAIN CONFIG REFERENCES"
+          echo "========================================"
+
+          grep -R -n -E \
+          'BR2_TOOLCHAIN_HEADERS|BR2_KERNEL_HEADERS|headers version|Headers version' \
+          toolchain \
+          2>/dev/null | head -300 || true
+
+      # ============================================================
+      # 7. INSPECT LEGACY OPTIONS
+      # ============================================================
+      - name: Inspect legacy kernel header options
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "LEGACY CONFIGURATION"
+          echo "========================================"
+
+          find . \
+            -name 'Config.in.legacy' \
+            -o -name '*legacy*' \
+            | sort
+
+          echo
+          echo "========================================"
+          echo "KERNEL HEADER LEGACY REFERENCES"
+          echo "========================================"
+
+          grep -R -n -E \
+          'BR2_KERNEL_HEADERS_4_14|BR2_KERNEL_HEADERS_AS_KERNEL|BR2_KERNEL_HEADERS_' \
+          . \
+          --include='Config.in.legacy' \
+          --include='*.mk' \
+          --include='Config.in' \
+          2>/dev/null | head -300 || true
+
+      # ============================================================
+      # 8. INSPECT HEADER CHECK SCRIPT
+      # ============================================================
+      - name: Inspect kernel header check
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CHECK-KERNEL-HEADERS SCRIPT"
+          echo "========================================"
+
+          if [ -f support/scripts/check-kernel-headers.sh ]; then
+            sed -n '1,320p' support/scripts/check-kernel-headers.sh
+          else
+            echo "check-kernel-headers.sh not found"
+          fi
+
+      # ============================================================
+      # 9. SEARCH 6.18 REFERENCES
+      # ============================================================
+      - name: Search default 6.18 references
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "6.18 REFERENCES"
+          echo "========================================"
+
+          grep -R -n -E \
+          '6\.18|6_18|6-18' \
+          toolchain package configs support \
+          2>/dev/null | head -300 || true
+
+      # ============================================================
+      # 10. SEARCH FOR AS-KERNEL IMPLEMENTATION
+      # ============================================================
+      - name: Inspect AS_KERNEL implementation
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "AS_KERNEL IMPLEMENTATION"
+          echo "========================================"
+
+          grep -R -n -B10 -A30 \
+          'BR2_KERNEL_HEADERS_AS_KERNEL' \
+          . \
+          --exclude-dir=.git \
+          2>/dev/null || true
+
+      # ============================================================
+      # 11. SUMMARY
+      # ============================================================
+      - name: Summary
+        working-directory: buildroot
+        run: |
+          echo "========================================"
+          echo "INSPECTION COMPLETE"
+          echo "========================================"
+          echo
+          echo "Repository:"
+          echo "backslashxx/buildroot"
+          echo
+          echo "Commit:"
+          git rev-parse HEAD
+          echo
+          echo "No build was performed."
+          echo "No configuration was modified."
+          echo "No files were changed."
