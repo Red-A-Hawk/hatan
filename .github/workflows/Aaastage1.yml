@@ -229,6 +229,12 @@ jobs:
 
         trap cleanup_monitor EXIT
 
+        if [ "${{ matrix.mlgo }}" = "with" ]; then
+          KCFLAGS="-mllvm -enable-ml-inliner=release -Rpass=inline-ml"
+        else
+          KCFLAGS=""
+        fi
+
         bear -- make -j$(nproc --all) \
           O=out \
           ARCH=arm64 \
@@ -245,6 +251,7 @@ jobs:
           CROSS_COMPILE="$CROSS_COMPILE" \
           CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
           CLANG_TRIPLE="$CLANG_TRIPLE" \
+          KCFLAGS="$KCFLAGS" \
           2>&1 | tee build.log
 
         test -f compile_commands.json
@@ -337,6 +344,50 @@ jobs:
             exit 1
           else
             echo "[OK] MLGO Release flag not found in MLGO-OFF build.log"
+          fi
+
+        fi
+
+    - name: Verify Inline MLGO
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "INLINE MLGO VERIFICATION"
+        echo "========================================"
+
+        TARGET="-mllvm -enable-ml-inliner=release"
+        REMARK="-Rpass=inline-ml"
+
+        if [ "${{ matrix.mlgo }}" = "with" ]; then
+
+          if grep -Fq -- "$TARGET" build.log; then
+            echo "[OK] Inline MLGO release flag found"
+            grep -Fn -- "$TARGET" build.log
+          else
+            echo "[ERROR] Inline MLGO release flag NOT found"
+            exit 1
+          fi
+
+          echo
+          echo "=== INLINE MLGO REMARKS ==="
+
+          if grep -Fq -- "$REMARK" build.log; then
+            echo "[OK] -Rpass=inline-ml found"
+            grep -Fn -- "$REMARK" build.log
+          else
+            echo "[ERROR] -Rpass=inline-ml NOT found"
+            exit 1
+          fi
+
+        else
+
+          if grep -Fq -- "$TARGET" build.log; then
+            echo "[ERROR] Inline MLGO release flag found in MLGO-OFF build"
+            grep -Fn -- "$TARGET" build.log
+            exit 1
+          else
+            echo "[OK] Inline MLGO release flag not found in MLGO-OFF build"
           fi
 
         fi
