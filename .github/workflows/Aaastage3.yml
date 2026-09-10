@@ -1,0 +1,145 @@
+name: Test Inline MLGO r547379
+
+on:
+  push:
+    branches:
+      - xxx-17
+
+jobs:
+  test-inline-mlgo:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout branch xxx-17
+        uses: actions/checkout@v4
+        with:
+          ref: xxx-17
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git python3
+
+      - name: Clone Clang r547379
+        run: |
+          set -e
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang
+
+      - name: Verify Clang
+        run: |
+          set -e
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+          echo "========================================"
+          echo "CLANG VERSION"
+          echo "========================================"
+          clang --version
+
+          echo
+          echo "========================================"
+          echo "ML INLINER OPTIONS"
+          echo "========================================"
+
+          clang -mllvm -help-hidden 2>&1 \
+            | grep -Ei 'ml-inliner|mlgo' \
+            | tee ml-inliner-options.log || true
+
+      - name: Create test source
+        run: |
+          cat > test.c <<'EOF'
+          static inline int add_fast(int a, int b)
+          {
+              return a + b;
+          }
+
+          static inline int multiply_fast(int a, int b)
+          {
+              return a * b;
+          }
+
+          int test_function(int x)
+          {
+              int a = add_fast(x, 10);
+              int b = multiply_fast(a, 3);
+              return b + 7;
+          }
+
+          int main(void)
+          {
+              return test_function(5);
+          }
+          EOF
+
+      - name: Test Inline MLGO OFF
+        run: |
+          set -e
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+          echo "========================================"
+          echo "INLINE MLGO OFF"
+          echo "========================================"
+
+          clang -O3 \
+            -Rpass=inline \
+            -Rpass-missed=inline \
+            -c test.c \
+            -o test-off.o \
+            2>&1 | tee inline-mlgo-off.log
+
+          test -f test-off.o
+
+      - name: Test Inline MLGO ON
+        run: |
+          set -e
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+          echo "========================================"
+          echo "INLINE MLGO ON"
+          echo "========================================"
+
+          clang -O3 \
+            -mllvm -enable-ml-inliner=release \
+            -Rpass=inline \
+            -Rpass-missed=inline \
+            -c test.c \
+            -o test-on.o \
+            2>&1 | tee inline-mlgo-on.log
+
+          test -f test-on.o
+
+      - name: Verify Inline MLGO
+        run: |
+          set -e
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+
+          echo "========================================"
+          echo "INLINE MLGO VERIFICATION"
+          echo "========================================"
+
+          if clang -O3 \
+            -mllvm -enable-ml-inliner=release \
+            -c test.c \
+            -o /tmp/mlgo-test.o \
+            2>&1 | tee inline-mlgo-runtime.log; then
+            echo
+            echo "[OK] Inline MLGO command accepted"
+          else
+            echo
+            echo "[FAIL] Inline MLGO failed"
+            exit 1
+          fi
+
+      - name: Upload Inline MLGO Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: inline-mlgo-r547379-test
+          path: |
+            clang/bin/clang
+            ml-inliner-options.log
+            test.c
+            inline-mlgo-off.log
+            inline-mlgo-on.log
+            inline-mlgo-runtime.log
