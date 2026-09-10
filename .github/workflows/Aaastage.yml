@@ -199,7 +199,7 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
-            KCFLAGS="-mllvm -inline-size-allowance=50 -mllvm -inline-threshold=175" \
+            KCFLAGS="-mllvm -inline-threshold=500 -mllvm -unroll-threshold=1200" \
             2>&1 | tee build.log
           test -f compile_commands.json
           python3 - <<'PY'
@@ -351,7 +351,7 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
-            KCFLAGS="-mllvm -inline-size-allowance=50 -mllvm -inline-threshold=175" \
+            KCFLAGS="-mllvm -inline-threshold=500 -mllvm -unroll-threshold=1200" \
             vmlinux \
             2>&1 | tee link-verbose.log
           test -f out/vmlinux
