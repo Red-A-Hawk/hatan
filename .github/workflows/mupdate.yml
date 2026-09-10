@@ -1,0 +1,106 @@
+name: Update Hawki-violet
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      - name: Checkout update branch
+        uses: actions/checkout@v4
+        with:
+          ref: update
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Git
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update 17.0 from tbyool
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          rm -rf tbyool
+
+          git clone \
+            --branch 17.0 \
+            --single-branch \
+            https://github.com/tbyool/android_kernel_xiaomi_sm6150.git \
+            tbyool
+
+          cd tbyool
+
+          git remote add target \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+          git push target \
+            HEAD:refs/heads/17.0 \
+            --force
+
+          cd ..
+
+          rm -rf tbyool
+
+      - name: Update stable from manipvlator
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          rm -rf manipvlator
+
+          git clone \
+            --branch stable \
+            --single-branch \
+            https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git \
+            manipvlator
+
+          cd manipvlator
+
+          git remote add target \
+            "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/Hawki-violet.git"
+
+          git push target \
+            HEAD:refs/heads/stable \
+            --force
+
+          cd ..
+
+          rm -rf manipvlator
+
+      - name: Verify branches
+        run: |
+          set -e
+
+          git ls-remote \
+            https://github.com/tbyool/android_kernel_xiaomi_sm6150.git \
+            refs/heads/17.0
+
+          git ls-remote \
+            https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git \
+            refs/heads/stable
+
+          git ls-remote \
+            https://github.com/Red-A-Hawk/Hawki-violet.git \
+            refs/heads/17.0
+
+          git ls-remote \
+            https://github.com/Red-A-Hawk/Hawki-violet.git \
+            refs/heads/stable
+
+          echo "Update completed successfully."
