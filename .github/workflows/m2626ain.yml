@@ -1,4 +1,4 @@
-name: Build Hatan Kernel with Buildroot
+name: Build Hatan Kernel with Buildroot v1
 
 on:
   workflow_dispatch:
