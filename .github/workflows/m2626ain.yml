@@ -43,9 +43,11 @@ jobs:
       - name: Verify sources
         run: |
           set -e
+
           echo "============================================"
           echo "BUILDROOT"
           echo "============================================"
+
           cd buildroot
           git rev-parse HEAD
           git branch --show-current
@@ -54,6 +56,7 @@ jobs:
           echo "============================================"
           echo "HATAN"
           echo "============================================"
+
           cd ../hatan
           git rev-parse HEAD
           git branch --show-current
@@ -62,6 +65,7 @@ jobs:
           echo "============================================"
           echo "KERNEL DEFCONFIG"
           echo "============================================"
+
           test -f arch/arm64/configs/vendor/violet-perf_defconfig
           ls -lh arch/arm64/configs/vendor/violet-perf_defconfig
 
@@ -92,6 +96,7 @@ jobs:
           echo "============================================"
           echo "FINAL BUILDROOT KERNEL CONFIG"
           echo "============================================"
+
           grep -E \
             '^(BR2_LINUX_KERNEL|BR2_KERNEL_HEADERS|BR2_PACKAGE_HOST_LINUX_HEADERS)' \
             .config || true
@@ -100,6 +105,7 @@ jobs:
           echo "============================================"
           echo "LOCAL SOURCE OVERRIDE"
           echo "============================================"
+
           cat local.mk
 
       - name: Check Hatan UAPI headers
@@ -135,6 +141,30 @@ jobs:
             output/build/linux-*/usr/include \
             2>/dev/null | head -100 || true
 
+      - name: Find sigcontext.h
+        working-directory: buildroot
+        run: |
+          set -e
+
+          echo "============================================"
+          echo "FIND SIGCONTEXT.H"
+          echo "============================================"
+
+          find output \
+            -type f \
+            -name "sigcontext.h" \
+            -print 2>/dev/null | sort
+
+          echo
+          echo "============================================"
+          echo "FIND AARCH64 SIGCONTEXT.H"
+          echo "============================================"
+
+          find output \
+            -type f \
+            -path "*/aarch64*/include/*/sigcontext.h" \
+            -print 2>/dev/null | sort
+
       - name: Build
         working-directory: buildroot
         run: |
@@ -147,15 +177,22 @@ jobs:
           echo "============================================"
           echo "BUILDROOT OUTPUT"
           echo "============================================"
-          find output/images -maxdepth 2 -type f -printf '%p\n' | sort
+
+          find output/images \
+            -maxdepth 2 \
+            -type f \
+            -printf '%p\n' | sort
 
           echo
           echo "============================================"
           echo "KERNEL OUTPUT"
           echo "============================================"
-          find output/build -path "*/arch/arm64/boot/*" \
+
+          find output/build \
+            -path "*/arch/arm64/boot/*" \
             -type f \
-            -printf '%p\n' 2>/dev/null | sort || true
+            -printf '%p\n' \
+            2>/dev/null | sort || true
 
       - name: Upload Buildroot images
         uses: actions/upload-artifact@v4
