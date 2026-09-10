@@ -1,4 +1,4 @@
-name: Build Hatan Kernel with Buildroot v1
+name: Build Hatan Kernel with Buildroot v2
 
 on:
   workflow_dispatch:
@@ -91,6 +91,8 @@ jobs:
 
           cat >> .config <<EOF
           BR2_LINUX_KERNEL=y
+          BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+          BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="4.14.357"
           BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
           BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="../hatan/arch/arm64/configs/vendor/violet-perf_defconfig"
           BR2_KERNEL_HEADERS_AS_KERNEL=y
