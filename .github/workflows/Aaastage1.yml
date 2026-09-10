@@ -320,13 +320,10 @@ jobs:
           echo "MLGO FLAG SCAN COMPLETE"
           echo "========================================"
 
-      - name: Verify gc-sections in Link Command
+      - name: Verify gc-sections
         run: |
           set -e
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-          echo "========================================"
-          echo "FORCING RELINK WITH VERBOSE OUTPUT"
-          echo "========================================"
           rm -f out/vmlinux
           make V=1 \
             O=out \
@@ -345,21 +342,18 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             vmlinux \
-            2>&1 | tee link-verbose.log
+            > link-verbose.log 2>&1
           test -f out/vmlinux
-          echo
           echo "========================================"
-          echo "SEARCHING FOR --gc-sections IN LINK COMMAND"
+          echo "GC-SECTIONS CHECK"
           echo "========================================"
-          if grep -n "gc-sections" link-verbose.log; then
-            echo
-            echo "[OK] --gc-sections found in the actual link command"
+          if grep -q -- "--gc-sections" link-verbose.log; then
+            echo "[OK] --gc-sections found"
           else
-            echo
-            echo "[FAIL] --gc-sections NOT found in the link command"
-            echo "[FAIL] LD_DEAD_CODE_DATA_ELIMINATION linker step may not be active"
+            echo "[ERROR] --gc-sections NOT found"
             exit 1
           fi
+          echo "========================================"
 
       - name: Create Image.gz
         run: |
