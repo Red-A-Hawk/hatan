@@ -1,0 +1,174 @@
+name: Build Hatan Kernel with Buildroot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT BUILDROOT
+      # ============================================================
+      - name: Checkout Buildroot
+        uses: actions/checkout@v4
+        with:
+          repository: backslashxx/buildroot
+          path: buildroot
+          fetch-depth: 0
+
+      # ============================================================
+      # 2. CHECKOUT HATAN KERNEL
+      # ============================================================
+      - name: Checkout Hatan Kernel
+        uses: actions/checkout@v4
+        with:
+          repository: Red-A-Hawk/hatan
+          ref: buildroot
+          path: hatan
+          fetch-depth: 0
+
+      # ============================================================
+      # 3. INSTALL DEPENDENCIES
+      # ============================================================
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            cpio \
+            flex \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            rsync \
+            unzip \
+            wget \
+            python3
+
+      # ============================================================
+      # 4. VERIFY SOURCES
+      # ============================================================
+      - name: Verify sources
+        run: |
+          set -e
+
+          echo "============================================"
+          echo "BUILDROOT"
+          echo "============================================"
+          cd buildroot
+          git rev-parse HEAD
+          git branch --show-current
+
+          echo
+          echo "============================================"
+          echo "HATAN"
+          echo "============================================"
+          cd ../hatan
+          git rev-parse HEAD
+          git branch --show-current
+
+          echo
+          echo "============================================"
+          echo "KERNEL DEFCONFIG"
+          echo "============================================"
+          test -f arch/arm64/configs/vendor/violet-perf_defconfig
+          ls -lh arch/arm64/configs/vendor/violet-perf_defconfig
+
+      # ============================================================
+      # 5. CONFIGURE BUILDROOT
+      # ============================================================
+      - name: Configure Buildroot
+        working-directory: buildroot
+        run: |
+          set -e
+
+          make qemu_aarch64_virt_defconfig
+
+          cat >> .config <<EOF
+          BR2_LINUX_KERNEL=y
+          BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+          BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="../hatan/arch/arm64/configs/vendor/violet-perf_defconfig"
+          BR2_KERNEL_HEADERS_AS_KERNEL=y
+          BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_14=y
+          EOF
+
+          cat > local.mk <<'EOF'
+          LINUX_OVERRIDE_SRCDIR = ../hatan
+          EOF
+
+          make olddefconfig
+
+          echo
+          echo "============================================"
+          echo "FINAL BUILDROOT KERNEL CONFIG"
+          echo "============================================"
+          grep -E \
+            '^(BR2_LINUX_KERNEL|BR2_KERNEL_HEADERS|BR2_PACKAGE_HOST_LINUX_HEADERS)' \
+            .config || true
+
+          echo
+          echo "============================================"
+          echo "LOCAL SOURCE OVERRIDE"
+          echo "============================================"
+          cat local.mk
+
+      # ============================================================
+      # 6. BUILD
+      # ============================================================
+      - name: Build
+        working-directory: buildroot
+        run: |
+          set -e
+
+          make -j"$(nproc)"
+
+      # ============================================================
+      # 7. SHOW OUTPUTS
+      # ============================================================
+      - name: Show outputs
+        working-directory: buildroot
+        run: |
+          echo "============================================"
+          echo "BUILDROOT OUTPUT"
+          echo "============================================"
+
+          find output/images -maxdepth 2 -type f -printf '%p\n' | sort
+
+          echo
+          echo "============================================"
+          echo "KERNEL OUTPUT"
+          echo "============================================"
+
+          find output/build -path "*/arch/arm64/boot/*" \
+            -type f \
+            -printf '%p\n' 2>/dev/null | sort || true
+
+      # ============================================================
+      # 8. UPLOAD BUILDROOT IMAGES
+      # ============================================================
+      - name: Upload Buildroot images
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-images
+          path: |
+            buildroot/output/images/**
+          if-no-files-found: warn
+
+      # ============================================================
+      # 9. UPLOAD KERNEL OUTPUTS
+      # ============================================================
+      - name: Upload kernel outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: hatan-kernel-build
+          path: |
+            buildroot/output/build/linux-*/arch/arm64/boot/Image
+            buildroot/output/build/linux-*/arch/arm64/boot/Image.gz
+            buildroot/output/build/linux-*/vmlinux
+            buildroot/output/build/linux-*/System.map
+          if-no-files-found: warn
