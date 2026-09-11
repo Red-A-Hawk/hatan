@@ -1,0 +1,596 @@
+name: Build Kernel MLGO Profile Matrix v69
+
+on:
+  push:
+    branches:
+      - xxx-17
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: k
+    strategy:
+      fail-fast: false
+      matrix:
+        mlgo:
+          - without
+          - with
+        profile:
+          - size
+          - boot
+          - size2
+          - boot2
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: xxx-17
+          fetch-depth: 1
+          path: k
+
+      - name: Setup 16GB Swap
+        run: |
+          set -e
+          echo "========================================"
+          echo "SETTING UP 16GB SWAP"
+          echo "========================================"
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo
+          echo "========================================"
+          echo "SWAP STATUS"
+          echo "========================================"
+          free -h
+          swapon --show
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            make \
+            zip \
+            unzip \
+            curl \
+            wget \
+            libelf-dev \
+            libncurses-dev \
+            python3 \
+            openjdk-17-jre-headless \
+            bear
+
+      - name: Clone LineageOS Toolchains
+        run: |
+          set -e
+          rm -rf clang gcc64 gcc32
+          git clone --depth=1 \
+            https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git \
+            clang
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
+
+      - name: Setup Environment
+        run: |
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+      - name: Verify toolchains
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          which clang
+          clang --version
+          which ld.lld
+          ld.lld --version
+          which llvm-ar
+          which llvm-nm
+          which llvm-objcopy
+          which llvm-objdump
+          which llvm-strip
+          echo "=== BEAR ==="
+          which bear
+          bear --version
+
+      - name: Load Original violet-perf defconfig
+        run: |
+          set -e
+          export ARCH=arm64
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          make O=out ARCH=arm64 vendor/violet-perf_defconfig
+          test -f out/.config
+
+      - name: Configure MLGO
+        run: |
+          set -e
+          export ARCH=arm64
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_MLGO_CLANG
+          else
+            scripts/config \
+              --file out/.config \
+              --disable CONFIG_MLGO_CLANG
+          fi
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Verify MLGO Configuration
+        run: |
+          set -e
+          echo "========================================"
+          echo "MLGO CONFIGURATION CHECK"
+          echo "========================================"
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
+              echo "[OK] CONFIG_MLGO_CLANG=y"
+            else
+              echo "[ERROR] CONFIG_MLGO_CLANG is not enabled"
+              exit 1
+            fi
+          else
+            if grep -q '^CONFIG_MLGO_CLANG=y' out/.config; then
+              echo "[ERROR] CONFIG_MLGO_CLANG=y in MLGO-OFF build"
+              exit 1
+            else
+              echo "[OK] CONFIG_MLGO_CLANG=n"
+            fi
+          fi
+
+      - name: Set Threshold Profile
+        run: |
+          set -e
+          echo "========================================"
+          echo "THRESHOLD PROFILE: ${{ matrix.profile }}"
+          echo "========================================"
+          case "${{ matrix.profile }}" in
+            size)
+              echo "PROFILE_KCFLAGS=-mllvm -inline-threshold=100 -mllvm -unroll-threshold=20" >> "$GITHUB_ENV"
+              echo "[INFO] Size profile (round 1): inline-threshold=100 unroll-threshold=20"
+              ;;
+            boot)
+              echo "PROFILE_KCFLAGS=-mllvm -inline-threshold=400" >> "$GITHUB_ENV"
+              echo "[INFO] Boot profile (round 1): inline-threshold=400 (unroll-threshold default)"
+              ;;
+            size2)
+              echo "PROFILE_KCFLAGS=-mllvm -inline-threshold=150 -mllvm -unroll-threshold=50" >> "$GITHUB_ENV"
+              echo "[INFO] Size profile (round 2): inline-threshold=150 unroll-threshold=50"
+              ;;
+            boot2)
+              echo "PROFILE_KCFLAGS=-mllvm -inline-threshold=600 -mllvm -unroll-threshold=100" >> "$GITHUB_ENV"
+              echo "[INFO] Boot profile (round 2): inline-threshold=600 unroll-threshold=100"
+              ;;
+            *)
+              echo "[ERROR] Unknown profile: ${{ matrix.profile }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Build Kernel with Bear
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          rm -f compile_commands.json
+          rm -f bear-build.log
+          rm -f build.log
+          monitor_resources() {
+            while true; do
+              printf '[%s] ' "$(date '+%Y-%m-%d %H:%M:%S')" >&2
+              RAM=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
+              SWAP=$(free -h | awk '/^Swap:/ {print $3 "/" $2}')
+              CPU=$(top -b -n 1 | awk '/Cpu(s)/ {printf "%.0f%%", 100 - $8; exit}')
+              LLD=$(ps -eo pid,%cpu,%mem,rss,vsz,stat,comm --sort=-rss \
+                | awk '$7 == "ld.lld" { printf "CPU: %.0f%% | MEM: %.1f%% | RSS: %.1fG | VSZ: %.1fG | STAT: %s", $2, $3, $4/1024/1024, $5/1024/1024, $6; exit }')
+              [ -z "$LLD" ] && LLD="N/A"
+              echo "RAM: $RAM | SWAP: $SWAP | CPU: $CPU | ld.lld: $LLD" >&2
+              sleep 15
+            done
+          }
+          monitor_resources &
+          MONITOR_PID=$!
+          cleanup_monitor() {
+            if kill -0 "$MONITOR_PID" 2>/dev/null; then
+              kill "$MONITOR_PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_monitor EXIT
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            MLGO_KCFLAGS="-mllvm -enable-ml-inliner=release -Rpass=inline-ml"
+          else
+            MLGO_KCFLAGS=""
+          fi
+          KCFLAGS="$MLGO_KCFLAGS $PROFILE_KCFLAGS"
+          echo "========================================"
+          echo "FINAL KCFLAGS: $KCFLAGS"
+          echo "========================================"
+          bear -- make -j$(nproc --all) \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            KCFLAGS="$KCFLAGS" \
+            > >(tee build.log) \
+            2>> build.log
+          test -f compile_commands.json
+          python3 - <<'PY'
+          import json
+          import shlex
+          with open("compile_commands.json", "r", encoding="utf-8") as f:
+              commands = json.load(f)
+          with open("bear-build.log", "w", encoding="utf-8") as f:
+              for entry in commands:
+                  arguments = entry.get("arguments")
+                  if arguments:
+                      f.write(shlex.join(arguments))
+                      f.write("\n")
+                      continue
+                  command = entry.get("command")
+                  if command:
+                      f.write(command)
+                      f.write("\n")
+          PY
+          test -f bear-build.log
+
+      - name: Measure Image.gz and dtbo.img
+        run: |
+          set -e
+          echo "========================================"
+          echo "OUTPUT IMAGE SIZES"
+          echo "========================================"
+
+          # Image.gz and dtbo.img are already produced by the default
+          # "Build Kernel with Bear" target above (no separate build
+          # needed). Image.gz is mandatory; dtbo.img is optional and
+          # only present if the defconfig enables DTBO.
+
+          IMAGE="out/arch/arm64/boot/Image.gz"
+          test -f "$IMAGE"
+          IMAGE_BYTES=$(stat -c '%s' "$IMAGE")
+          IMAGE_MB=$(python3 -c "print(f'{int($IMAGE_BYTES) / (1024 * 1024):.2f}')")
+          echo "Image.gz : ${IMAGE_MB} MB (${IMAGE_BYTES} bytes)"
+
+          DTBO="out/arch/arm64/boot/dtbo.img"
+          if [ -f "$DTBO" ]; then
+            DTBO_BYTES=$(stat -c '%s' "$DTBO")
+            DTBO_MB=$(python3 -c "print(f'{int($DTBO_BYTES) / (1024 * 1024):.2f}')")
+            echo "dtbo.img : ${DTBO_MB} MB (${DTBO_BYTES} bytes)"
+          else
+            DTBO_BYTES="N/A"
+            DTBO_MB="N/A"
+            echo "dtbo.img : not produced (DTBO not enabled in this defconfig)"
+          fi
+
+          echo "========================================"
+
+          {
+            echo "MLGO=${{ matrix.mlgo }}"
+            echo "PROFILE=${{ matrix.profile }}"
+            echo "Image.gz: ${IMAGE_MB} MB"
+            echo "Image.gz exact bytes: ${IMAGE_BYTES} bytes"
+            echo "dtbo.img: ${DTBO_MB} MB"
+            echo "dtbo.img exact bytes: ${DTBO_BYTES} bytes"
+          } > output-sizes.txt
+
+      - name: Split Errors and Warnings
+        run: |
+          set -e
+          echo "========================================"
+          echo "SPLITTING ERRORS AND WARNINGS"
+          echo "========================================"
+          grep -E ': error:' build.log > errors.log || true
+          grep -E ': warning:' build.log > warnings.log || true
+          echo "Errors found: $(wc -l < errors.log)"
+          echo "Warnings found: $(wc -l < warnings.log)"
+          test -f errors.log
+          test -f warnings.log
+
+      - name: Verify MLGO Flag from build.log
+        run: |
+          set -e
+          echo "========================================"
+          echo "MLGO FLAG VERIFICATION"
+          echo "========================================"
+          TARGET="-mllvm -regalloc-enable-advisor=release"
+          python3 - <<'PY'
+          import json
+          import shlex
+          with open("compile_commands.json", "r", encoding="utf-8") as f:
+              commands = json.load(f)
+          with open("build.log", "a", encoding="utf-8") as log:
+              log.write("\n")
+              log.write("========================================\n")
+              log.write("BEAR CLANG COMMANDS\n")
+              log.write("========================================\n")
+              for entry in commands:
+                  arguments = entry.get("arguments")
+                  if arguments:
+                      log.write(shlex.join(arguments))
+                      log.write("\n")
+                      continue
+                  command = entry.get("command")
+                  if command:
+                      log.write(command)
+                      log.write("\n")
+          PY
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[OK] MLGO Release flag found in build.log"
+              echo
+              echo "=== MLGO MATCH ==="
+              grep -Fn -- "$TARGET" build.log
+            else
+              echo "[ERROR] MLGO Release flag NOT found in build.log"
+              exit 1
+            fi
+          else
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[ERROR] MLGO Release flag found in MLGO-OFF build.log"
+              echo
+              echo "=== UNEXPECTED MLGO MATCH ==="
+              grep -Fn -- "$TARGET" build.log
+              exit 1
+            else
+              echo "[OK] MLGO Release flag not found in MLGO-OFF build.log"
+            fi
+          fi
+
+      - name: Verify Inline MLGO
+        run: |
+          set -e
+          echo "========================================"
+          echo "INLINE MLGO VERIFICATION"
+          echo "========================================"
+          TARGET="-mllvm -enable-ml-inliner=release"
+          REMARK="-Rpass=inline-ml"
+          if [ "${{ matrix.mlgo }}" = "with" ]; then
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[OK] Inline MLGO release flag found"
+              grep -Fn -- "$TARGET" build.log
+            else
+              echo "[ERROR] Inline MLGO release flag NOT found"
+              exit 1
+            fi
+            echo
+            echo "=== INLINE MLGO REMARKS ==="
+            if grep -Fq -- "$REMARK" build.log; then
+              echo "[OK] -Rpass=inline-ml found"
+              grep -Fn -- "$REMARK" build.log
+            else
+              echo "[ERROR] -Rpass=inline-ml NOT found"
+              exit 1
+            fi
+          else
+            if grep -Fq -- "$TARGET" build.log; then
+              echo "[ERROR] Inline MLGO release flag found in MLGO-OFF build"
+              grep -Fn -- "$TARGET" build.log
+              exit 1
+            else
+              echo "[OK] Inline MLGO release flag not found in MLGO-OFF build"
+            fi
+          fi
+
+      - name: Verify Threshold Profile Flags
+        run: |
+          set -e
+          echo "========================================"
+          echo "THRESHOLD PROFILE VERIFICATION: ${{ matrix.profile }}"
+          echo "========================================"
+          case "${{ matrix.profile }}" in
+            size)
+              if grep -Fq -- "-inline-threshold=100" build.log && grep -Fq -- "-unroll-threshold=20" build.log; then
+                echo "[OK] Size profile (round 1) flags found"
+              else
+                echo "[ERROR] Size profile (round 1) flags NOT found"
+                exit 1
+              fi
+              ;;
+            boot)
+              if grep -Fq -- "-inline-threshold=400" build.log; then
+                echo "[OK] Boot profile (round 1) flag found"
+              else
+                echo "[ERROR] Boot profile (round 1) flag NOT found"
+                exit 1
+              fi
+              ;;
+            size2)
+              if grep -Fq -- "-inline-threshold=150" build.log && grep -Fq -- "-unroll-threshold=50" build.log; then
+                echo "[OK] Size profile (round 2) flags found"
+              else
+                echo "[ERROR] Size profile (round 2) flags NOT found"
+                exit 1
+              fi
+              ;;
+            boot2)
+              if grep -Fq -- "-inline-threshold=600" build.log && grep -Fq -- "-unroll-threshold=100" build.log; then
+                echo "[OK] Boot profile (round 2) flags found"
+              else
+                echo "[ERROR] Boot profile (round 2) flags NOT found"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "[ERROR] Unknown profile: ${{ matrix.profile }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Scan MLGO Flags
+        run: |
+          set -e
+          echo "========================================"
+          echo "MLGO FLAG SCAN"
+          echo "========================================"
+          grep -Ein '(^|[[:space:]])(-mllvm|.*mlgo.*|.*regalloc.*)' build.log || true
+          echo "========================================"
+          echo "MLGO FLAG SCAN COMPLETE"
+          echo "========================================"
+
+      - name: Verify gc-sections
+        run: |
+          set -e
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          rm -f out/vmlinux
+          # Dry-run only (-n): prints the link command make WOULD run,
+          # without actually performing the link. This avoids paying
+          # the full link cost (minutes) just to inspect the flags.
+          make V=1 -n \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            vmlinux \
+            > link-verbose.log 2>&1
+          echo "========================================"
+          echo "GC-SECTIONS CHECK (dry-run, no real link performed)"
+          echo "========================================"
+          if grep -q -- "--gc-sections" link-verbose.log; then
+            echo "[OK] --gc-sections found"
+            echo
+            echo "--- matching part (context only) ---"
+            grep -o -- ".\{0,50\}--gc-sections.\{0,50\}" link-verbose.log | head -1
+          else
+            echo "[ERROR] --gc-sections NOT found"
+            exit 1
+          fi
+          echo "========================================"
+          echo "Full dry-run link command saved to link-verbose.log ($(wc -l < link-verbose.log) lines, $(du -h link-verbose.log | cut -f1))"
+          echo "========================================"
+
+      - name: Measure vmlinux
+        run: |
+          set -e
+          test -f out/vmlinux
+          SIZE=$(stat -c '%s' out/vmlinux)
+          echo "========================================"
+          echo "MLGO MODE: ${{ matrix.mlgo }}"
+          echo "PROFILE: ${{ matrix.profile }}"
+          echo "vmlinux size: $SIZE bytes"
+          echo "========================================"
+          echo "MLGO=${{ matrix.mlgo }}" > vmlinux-size.txt
+          echo "PROFILE=${{ matrix.profile }}" >> vmlinux-size.txt
+          echo "VMLINUX_SIZE=$SIZE" >> vmlinux-size.txt
+
+      - name: Upload MLGO Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlgo-evidence-${{ matrix.mlgo }}-${{ matrix.profile }}
+          if-no-files-found: warn
+          path: |
+            k/compile_commands.json
+            k/bear-build.log
+            k/build.log
+            k/errors.log
+            k/warnings.log
+            k/link-verbose.log
+            k/vmlinux-size.txt
+            k/output-sizes.txt
+            k/out/arch/arm64/boot/Image.gz
+            k/out/arch/arm64/boot/dtbo.img
+
+  summary:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download all MLGO evidence artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-results
+          pattern: mlgo-evidence-*
+
+      - name: Build Combined Report
+        run: |
+          set -e
+          echo "========================================"
+          echo "COMBINING 8 RESULTS"
+          echo "========================================"
+
+          REPORT="report.md"
+
+          {
+            echo "# MLGO Profile Matrix — Combined Results"
+            echo
+            echo "| MLGO | Profile | vmlinux (bytes) | Image.gz (MB) | Image.gz (bytes) | dtbo.img (MB) | dtbo.img (bytes) |"
+            echo "|---|---|---|---|---|---|---|"
+          } > "$REPORT"
+
+          for dir in all-results/mlgo-evidence-*/; do
+            [ -d "$dir" ] || continue
+
+            SIZES_FILE="${dir}output-sizes.txt"
+            VMLINUX_FILE="${dir}vmlinux-size.txt"
+
+            if [ ! -f "$SIZES_FILE" ] || [ ! -f "$VMLINUX_FILE" ]; then
+              echo "[WARN] Missing data in $dir, skipping"
+              continue
+            fi
+
+            MLGO=$(grep '^MLGO=' "$VMLINUX_FILE" | cut -d= -f2)
+            PROFILE=$(grep '^PROFILE=' "$VMLINUX_FILE" | cut -d= -f2)
+            VMLINUX_SIZE=$(grep '^VMLINUX_SIZE=' "$VMLINUX_FILE" | cut -d= -f2)
+
+            IMAGE_MB=$(grep '^Image.gz:' "$SIZES_FILE" | awk '{print $2}')
+            IMAGE_BYTES=$(grep '^Image.gz exact bytes:' "$SIZES_FILE" | awk '{print $4}')
+            DTBO_MB=$(grep '^dtbo.img:' "$SIZES_FILE" | awk '{print $2}')
+            DTBO_BYTES=$(grep '^dtbo.img exact bytes:' "$SIZES_FILE" | awk '{print $4}')
+
+            echo "| $MLGO | $PROFILE | $VMLINUX_SIZE | $IMAGE_MB | $IMAGE_BYTES | $DTBO_MB | $DTBO_BYTES |" >> "$REPORT"
+          done
+
+          echo >> "$REPORT"
+          echo "_Generated automatically from 8 matrix builds (2 MLGO × 4 profiles)._" >> "$REPORT"
+
+          echo "========================================"
+          cat "$REPORT"
+          echo "========================================"
+
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Combined Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-report
+          path: report.md
